@@ -45,8 +45,18 @@ object ProotBootstrap {
         val rootfs = rootfsDir(ctx)
         return marker(ctx, BOX_ROOTFS_VERSION).exists() &&
             rootfs.isDirectory &&
-            File(rootfs, "bin/sh").isFile
+            rootfsExtracted(rootfs)
     }
+
+    /**
+     * True if the Alpine rootfs looks extracted. We key on bin/busybox (a real
+     * regular file), NOT bin/sh: on Alpine bin/sh is a symlink to the ABSOLUTE
+     * path /bin/busybox, so File("bin/sh").isFile resolves it against the
+     * Android host root (where /bin/busybox does not exist) and returns false
+     * even though extraction succeeded. busybox is the authoritative marker.
+     */
+    private fun rootfsExtracted(rootfs: File): Boolean =
+        File(rootfs, "bin/busybox").isFile
 
     /**
      * Find proot-xed binary, handling Android renaming libproot-xed.so to
@@ -105,7 +115,7 @@ object ProotBootstrap {
 
             // 3. Download rootfs if needed — use version marker to detect upgrades
             val boxMarker = marker(ctx, BOX_ROOTFS_VERSION)
-            val rootfsHasSh = File(rootfs, "bin/sh").isFile
+            val rootfsHasSh = rootfsExtracted(rootfs)
             if (!boxMarker.exists() || !rootfsHasSh) {
                 // Remove old rootfs if present (upgrade path)
                 if (rootfs.isDirectory) {
@@ -125,10 +135,15 @@ object ProotBootstrap {
                 log("Extracting rootfs...")
                 val ok = runBsdtar(bsdtar, tarball, rootfs, stripComponents = 1, log = log)
                 tarball.delete()
-                if (!ok || !File(rootfs, "bin/sh").isFile) {
-                    log("ERROR: Extraction failed - bin/sh not found in rootfs")
+                // Verify by busybox presence, NOT bin/sh (an absolute symlink that
+                // Java resolves against the host root). bsdtar may also return
+                // nonzero purely from Android SELinux symlink/hardlink denials
+                // while still extracting the tree, so busybox is authoritative.
+                if (!rootfsExtracted(rootfs)) {
+                    log("ERROR: Extraction failed - bin/busybox not found in rootfs (bsdtar ok=$ok)")
                     return false
                 }
+                if (!ok) log("Note: bsdtar reported errors (likely SELinux symlink denials); busybox present, continuing")
                 boxMarker.writeText("box-alpine-3.21")
                 log("Rootfs extracted (Alpine release)")
             } else {
