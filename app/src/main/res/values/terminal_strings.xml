@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Strings required by org.xnet.readb.terminal.view.TerminalView (text selection
+     action-mode menu). Kept in a dedicated file so they merge with the
+     integrator's own strings.xml without name collisions. -->
+<resources>
+    <string name="copy_text">Copy</string>
+    <string name="paste_text">Paste</string>
+    <string name="text_selection_more">More</string>
+</resources>
