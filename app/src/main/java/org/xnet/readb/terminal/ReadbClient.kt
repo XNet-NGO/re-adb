@@ -6,6 +6,7 @@ import android.content.Context
 import android.util.Log
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.inputmethod.InputMethodManager
 import android.widget.Toast
 import com.termux.terminal.TerminalSession
 import com.termux.terminal.TerminalSessionClient
@@ -62,7 +63,13 @@ class ReadbClient(
 
     // ── TerminalViewClient ──
     override fun onScale(scale: Float): Float = scale
-    override fun onSingleTapUp(e: MotionEvent?) { view.requestFocus() }
+    override fun onSingleTapUp(e: MotionEvent?) {
+        // Focus the terminal AND show the soft keyboard — without this the view
+        // has focus but no IME appears, so there's no way to type at the cursor.
+        view.requestFocus()
+        val imm = view.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        imm?.showSoftInput(view, InputMethodManager.SHOW_IMPLICIT)
+    }
     override fun shouldBackButtonBeMappedToEscape(): Boolean = false
     override fun copyModeChanged(copyMode: Boolean) {}
     override fun onKeyDown(keyCode: Int, e: KeyEvent?, session: TerminalSession?): Boolean = false
