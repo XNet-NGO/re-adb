@@ -153,12 +153,44 @@ object ProotBootstrap {
             // 4. Patch rootfs
             patchRootfs(rootfs, log)
 
+            // 5. Pre-install Android SDK platform-tools (adb) so the terminal and
+            //    readb-setup have adb ready. Best-effort: readb-setup also
+            //    installs it on demand if this is skipped/offline.
+            installAndroidTools(ctx, log)
+
             log("Alpine environment ready!")
             return true
         } catch (e: Exception) {
             log("ERROR: ${e.message}")
             Log.e(TAG, "setup failed", e)
             return false
+        }
+    }
+
+    /**
+     * Best-effort install of Android platform-tools (adb) inside Alpine. Marked
+     * done so it runs once. Non-fatal: readb-setup re-installs on demand.
+     */
+    private fun installAndroidTools(ctx: Context, log: (String) -> Unit) {
+        val marker = File(envDir(ctx), ".android_tools_done")
+        if (marker.exists()) return
+        log("Installing Android tools (adb) in Alpine...")
+        try {
+            ProotExecutor.exec(ctx, "apk update >/dev/null 2>&1 || true", timeoutMs = 60_000)
+            val out = ProotExecutor.exec(
+                ctx, "apk add --no-cache android-tools 2>&1 | tail -3", timeoutMs = 120_000,
+            )
+            // Verify adb landed.
+            val ok = ProotExecutor.exec(ctx, "command -v adb || echo MISSING", timeoutMs = 20_000)
+            if (ok.contains("/adb") || ok.contains("adb")) {
+                marker.writeText("android-tools installed")
+                log("adb installed.")
+            } else {
+                log("adb install not confirmed (will retry via readb-setup): ${out.take(120)}")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "installAndroidTools failed (non-fatal): ${e.message}")
+            log("Android tools install skipped (${e.message}); run readb-setup later.")
         }
     }
 
@@ -441,9 +473,63 @@ object ProotBootstrap {
             export TERM=xterm-256color
             export LANG=C.UTF-8
             export LC_ALL=C.UTF-8
+            echo ""
+            echo "re-adb · Alpine shell.  Run  readb-setup  to pair+enable adb (tcpip 5555)."
+            echo ""
             """.trimIndent() + "\n"
         )
 
-        log("Rootfs patched (DNS, apk repos, exec bits, profiles)")
+        // readb-setup: interactive ADB self-provisioning helper. Prompts for the
+        // Wireless-Debugging PAIRING PORT + 6-digit code, then automates the full
+        // sequence against the device's own loopback adbd and PINS adbd on 5555
+        // (which the re-adb tunnel then exposes). All over 127.0.0.1.
+        File(rootfs, "usr/local/bin").mkdirs()
+        val setupScript = File(rootfs, "usr/local/bin/readb-setup")
+        setupScript.writeText(
+            """
+            #!/bin/sh
+            # re-adb ADB provisioner. Pins adbd to tcp:5555 over loopback.
+            set -u
+            ADBD_PORT=5555
+            echo "=== re-adb · adb provisioning ==="
+            if ! command -v adb >/dev/null 2>&1; then
+              echo "adb not found; installing android-tools..."
+              apk add --no-cache android-tools >/dev/null 2>&1 || { echo "apk add android-tools failed"; exit 1; }
+            fi
+            adb kill-server >/dev/null 2>&1
+
+            echo "On the phone: Settings > Developer options > Wireless debugging >"
+            echo "  'Pair device with pairing code'. Note the PORT and 6-digit CODE."
+            printf "Pairing port: "; read PAIR_PORT
+            printf "Pairing code (6 digits): "; read PAIR_CODE
+            if [ -z "${'$'}PAIR_PORT" ] || [ -z "${'$'}PAIR_CODE" ]; then
+              echo "port and code are required"; exit 1
+            fi
+
+            echo "-> adb pair 127.0.0.1:${'$'}PAIR_PORT"
+            adb pair 127.0.0.1:"${'$'}PAIR_PORT" "${'$'}PAIR_CODE" || { echo "pair failed"; exit 1; }
+
+            # After pairing, connect to the current wireless-debug port to issue
+            # tcpip, which restarts adbd on a PINNED, stable port (5555).
+            echo "-> adb connect 127.0.0.1:${'$'}PAIR_PORT (transient)"
+            adb connect 127.0.0.1:"${'$'}PAIR_PORT" >/dev/null 2>&1
+            echo "-> adb tcpip ${'$'}ADBD_PORT  (pin adbd)"
+            adb tcpip "${'$'}ADBD_PORT" >/dev/null 2>&1
+            sleep 2
+            echo "-> adb connect 127.0.0.1:${'$'}ADBD_PORT"
+            if adb connect 127.0.0.1:"${'$'}ADBD_PORT" | grep -qiE 'connected|already'; then
+              echo ""
+              echo "OK: adbd pinned on 127.0.0.1:${'$'}ADBD_PORT."
+              echo "In re-adb's Tunnels panel, add a Tunnel with your remote IP + key;"
+              echo "it forwards this 127.0.0.1:${'$'}ADBD_PORT to your box, encrypted."
+              adb devices
+            else
+              echo "WARN: could not confirm adbd on ${'$'}ADBD_PORT; check Wireless debugging is on."
+            fi
+            """.trimIndent() + "\n"
+        )
+        setupScript.setExecutable(true)
+
+        log("Rootfs patched (DNS, apk repos, exec bits, profiles, readb-setup)")
     }
 }

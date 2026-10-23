@@ -26,6 +26,11 @@ class TunnelPanel(
     private val ctx: Context = container.context
     private var expanded = -1  // which accordion is open (-1 = none)
 
+    private companion object {
+        const val ADBD_PORT = 5555          // pinned local adbd target
+        const val TUNNEL_SERVER_PORT = 2222 // fixed rendezvous-server port
+    }
+
     private fun dp(v: Int) = (v * ctx.resources.displayMetrics.density).toInt()
 
     fun render() {
@@ -131,19 +136,28 @@ class TunnelPanel(
     }
 
     private fun tunnelForm(b: LinearLayout) {
-        val saddr = field(b, "Server address", "box ip / host")
-        val sport = field(b, "Server port  (1–65535)", "e.g. 7000", numeric = true)
-        val psk = field(b, "Pre-shared key  (64 hex chars)", "64 hex characters")
-        val taddr = field(b, "Local target addr", "127.0.0.1", "127.0.0.1")
-        val tport = field(b, "Local target port  (1–65535)", "5555  (adbd)", "5555", numeric = true)
+        b.addView(TextView(ctx).apply {
+            text = "Exposes this device's adb (127.0.0.1:$ADBD_PORT) to your box, " +
+                "encrypted. Run  readb-setup  in the terminal first to enable adb. " +
+                "Server port is fixed at $TUNNEL_SERVER_PORT."
+            setTextColor(0xFF999999.toInt()); textSize = 11f; setPadding(0, dp(2), 0, dp(4))
+        })
+        val saddr = field(b, "Remote server IP", "your box ip / host")
+        val psk = field(b, "Key  (64 hex chars)", "64 hex characters")
         addButton(b, "Add tunnel") {
-            if (saddr.text.isBlank()) return@addButton toast("Server address required")
-            val sp = port(sport.text.toString()) ?: return@addButton toast("Server port must be 1–65535")
-            val tp = port(tport.text.toString()) ?: return@addButton toast("Target port must be 1–65535")
+            if (saddr.text.isBlank()) return@addButton toast("Server IP required")
             val key = psk.text.toString().trim()
-            if (!isHex64(key)) return@addButton toast("PSK must be exactly 64 hex characters")
-            add(Route(tunnel = true, serverAddr = saddr.text.toString().trim(), serverPort = sp,
-                targetAddr = taddr.text.toString().ifBlank { "127.0.0.1" }, targetPort = tp, psk = key))
+            if (!isHex64(key)) return@addButton toast("Key must be exactly 64 hex characters")
+            // Everything else is PINNED: dial the box on the fixed server port,
+            // splice to the local adbd on 127.0.0.1:5555.
+            add(Route(
+                tunnel = true,
+                serverAddr = saddr.text.toString().trim(),
+                serverPort = TUNNEL_SERVER_PORT,
+                targetAddr = "127.0.0.1",
+                targetPort = ADBD_PORT,
+                psk = key,
+            ))
         }
     }
 
