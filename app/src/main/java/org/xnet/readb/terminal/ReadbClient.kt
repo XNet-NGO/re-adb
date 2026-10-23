@@ -1,8 +1,12 @@
 package org.xnet.readb.terminal
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.util.Log
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.widget.Toast
 import com.termux.terminal.TerminalSession
 import com.termux.terminal.TerminalSessionClient
 import org.xnet.readb.terminal.view.TerminalView
@@ -27,8 +31,20 @@ class ReadbClient(
     override fun onTextChanged(session: TerminalSession) { view.onScreenUpdated(); onRedraw() }
     override fun onTitleChanged(session: TerminalSession) {}
     override fun onSessionFinished(session: TerminalSession) { onFinished(session) }
-    override fun onCopyTextToClipboard(session: TerminalSession, text: String?) {}
-    override fun onPasteTextFromClipboard(session: TerminalSession?) {}
+    override fun onCopyTextToClipboard(session: TerminalSession, text: String?) {
+        if (text.isNullOrEmpty()) return
+        val ctx: Context = view.context
+        val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
+        cm.setPrimaryClip(ClipData.newPlainText("re-adb", text))
+        Toast.makeText(ctx, "Copied ${text.length} chars", Toast.LENGTH_SHORT).show()
+    }
+    override fun onPasteTextFromClipboard(session: TerminalSession?) {
+        val cm = view.context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
+        val clip = cm.primaryClip ?: return
+        if (clip.itemCount == 0) return
+        val paste = clip.getItemAt(0).coerceToText(view.context)?.toString() ?: return
+        session?.write(paste)
+    }
     override fun onBell(session: TerminalSession) {}
     override fun onColorsChanged(session: TerminalSession) { onRedraw() }
     override fun onTerminalCursorStateChange(state: Boolean) {}

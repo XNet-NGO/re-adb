@@ -14,6 +14,9 @@ import android.widget.Spinner
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import com.termux.terminal.TerminalSession
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -44,7 +47,19 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Edge-to-edge: draw behind the system bars, then pad the root by the
+        // bar insets so content isn't occluded.
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         setContentView(R.layout.activity_main)
+
+        val root = findViewById<View>(R.id.rootLayout)
+        ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
+            val bars = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.ime()
+            )
+            v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            insets
+        }
 
         terminalView = findViewById(R.id.terminalView)
         tunnelStatus = findViewById(R.id.tunnelStatus)
@@ -52,23 +67,7 @@ class MainActivity : AppCompatActivity() {
         bootstrapOverlay = findViewById(R.id.bootstrapOverlay)
         bootstrapLog = findViewById(R.id.bootstrapLog)
 
-        val termTab = findViewById<Button>(R.id.btnTermTab)
-        val tunnelTab = findViewById<Button>(R.id.btnTunnelTab)
-        val terminalSection = findViewById<View>(R.id.terminalSection)
-        val tunnelSection = findViewById<View>(R.id.tunnelSection)
-        val extraKeys = findViewById<View>(R.id.extraKeys)
-        termTab.setOnClickListener {
-            terminalSection.visibility = View.VISIBLE; extraKeys.visibility = View.VISIBLE
-            tunnelSection.visibility = View.GONE
-            termTab.setTextColor(0xFFFFFFFF.toInt()); tunnelTab.setTextColor(0xFF888888.toInt())
-        }
-        tunnelTab.setOnClickListener {
-            terminalSection.visibility = View.GONE; extraKeys.visibility = View.GONE
-            tunnelSection.visibility = View.VISIBLE
-            termTab.setTextColor(0xFF888888.toInt()); tunnelTab.setTextColor(0xFFFFFFFF.toInt())
-            refreshRoutes()
-        }
-
+        // Single combined view (no tabs): tunnels on top 1/3, terminal bottom 2/3.
         findViewById<Button>(R.id.btnStartStop).setOnClickListener { toggleForwarder(it as Button) }
         findViewById<Button>(R.id.btnAddRoute).setOnClickListener { showAddDialog() }
 
