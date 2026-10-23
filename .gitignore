@@ -1,0 +1,19 @@
+# Build
+/build/
+/app/build/
+.gradle/
+*.apk
+
+# Local config
+local.properties
+
+# Fetched prebuilt artifacts (downloaded by Gradle at build time)
+/app/.portmux/
+/app/src/main/jniLibs/
+.cxx/
+
+# Editor / OS
+*.iml
+.idea/
+.DS_Store
+.kotlin/

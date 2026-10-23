@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#000000">
+
+    <!-- Top toggle bar: Terminal | Tunnels, + Start/Stop -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:orientation="horizontal"
+        android:background="#1E1E1E"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="8dp">
+        <Button android:id="@+id/btnTermTab" android:layout_width="wrap_content"
+            android:layout_height="40dp" android:text="Terminal"
+            android:textColor="#FFFFFF" android:background="@android:color/transparent"/>
+        <Button android:id="@+id/btnTunnelTab" android:layout_width="wrap_content"
+            android:layout_height="40dp" android:text="Tunnels"
+            android:textColor="#888888" android:background="@android:color/transparent"/>
+        <View android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1"/>
+        <Button android:id="@+id/btnStartStop" android:layout_width="wrap_content"
+            android:layout_height="40dp" android:text="Start"
+            android:textColor="#4CAF50" android:background="@android:color/transparent"/>
+    </LinearLayout>
+
+    <!-- Terminal section -->
+    <FrameLayout
+        android:id="@+id/terminalSection"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+        <org.xnet.readb.terminal.view.TerminalView
+            android:id="@+id/terminalView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:focusable="true"
+            android:focusableInTouchMode="true"/>
+        <!-- Bootstrap / status overlay -->
+        <ScrollView
+            android:id="@+id/bootstrapOverlay"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="#CC000000"
+            android:visibility="gone">
+            <TextView
+                android:id="@+id/bootstrapLog"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:textColor="#C8E6C9"
+                android:textSize="12sp"
+                android:padding="12dp"/>
+        </ScrollView>
+    </FrameLayout>
+
+    <!-- Extra keys row for the terminal -->
+    <LinearLayout
+        android:id="@+id/extraKeys"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="#020817"/>
+
+    <!-- Tunnels section -->
+    <LinearLayout
+        android:id="@+id/tunnelSection"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:visibility="gone"
+        android:background="#0A0A0A">
+        <TextView
+            android:id="@+id/tunnelStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:padding="12dp"
+            android:textColor="#AAAAAA"
+            android:text="Stopped"/>
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1">
+            <LinearLayout
+                android:id="@+id/routeList"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"/>
+        </ScrollView>
+        <Button
+            android:id="@+id/btnAddRoute"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="+ Add route / tunnel"
+            android:layout_margin="8dp"/>
+    </LinearLayout>
+
+</LinearLayout>
