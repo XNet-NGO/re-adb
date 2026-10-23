@@ -24,7 +24,7 @@ class TunnelPanel(
     private val onChanged: () -> Unit,
 ) {
     private val ctx: Context = container.context
-    private var expanded = -1  // which accordion is open (-1 = none)
+    private var expanded = 2  // the tunnel section (the only one) is open by default
 
     private companion object {
         const val ADBD_PORT = 5555          // pinned local adbd target
@@ -35,9 +35,9 @@ class TunnelPanel(
 
     fun render() {
         container.removeAllViews()
-        section(0, "▸  Forward (TCP/UDP port)") { body -> forwardForm(body) }
-        section(1, "▸  SOCKS5 proxy") { body -> socksForm(body) }
-        section(2, "▸  Encrypted tunnel  (remote adb)") { body -> tunnelForm(body) }
+        // Only the encrypted tunnel (remote adb) is offered; Forward and SOCKS5
+        // are intentionally hidden for the re-adb use case.
+        section(2, "▾  Encrypted tunnel  (remote adb)") { body -> tunnelForm(body) }
         divider()
         header("Active routes")
         routesList()
