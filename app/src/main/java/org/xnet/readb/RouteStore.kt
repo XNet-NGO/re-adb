@@ -33,6 +33,13 @@ object RouteStore {
                     serverPort = o.optInt("serverPort"),
                     psk = o.optString("psk", ""),
                     cipher = o.optInt("cipher"),
+                    jump = o.optBoolean("jump", false),
+                    jumpHops = o.optJSONArray("jumpHops")?.let { ja ->
+                        (0 until ja.length()).map { ja.getString(it) }
+                    } ?: emptyList(),
+                    jumpListenPort = o.optInt("jumpListenPort"),
+                    jumpProto = o.optInt("jumpProto"),
+                    peer = o.optBoolean("peer", false),
                     echo = o.optBoolean("echo", false),
                     enabled = o.optBoolean("enabled", true),
                 )
@@ -62,6 +69,11 @@ object RouteStore {
                     .put("serverPort", r.serverPort)
                     .put("psk", r.psk)
                     .put("cipher", r.cipher)
+                    .put("jump", r.jump)
+                    .put("jumpHops", JSONArray(r.jumpHops))
+                    .put("jumpListenPort", r.jumpListenPort)
+                    .put("jumpProto", r.jumpProto)
+                    .put("peer", r.peer)
                     .put("echo", r.echo)
                     .put("enabled", r.enabled),
             )

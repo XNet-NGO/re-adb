@@ -341,24 +341,35 @@ parse_psk_hex (const char *hex, unsigned char out[PM_TUNNEL_PSK_LEN])
 /* Encrypted tunnel CLIENT (NoisePSK_NN): dial serverAddr:serverPort and splice
    to targetAddr:targetPort. pskHex = 64 hex chars. cipher 0=AES-GCM, 1=ChaCha.
    The outbound leg honors the egress (incl. the no-root NETWORK pin + live
-   handle), reusing build_egress exactly like a normal route. */
+   handle), reusing build_egress exactly like a normal route.
+   REVERSE/EDGE (v0.4.0/v0.5.0): rlistenAddr/rlistenPort open a local plaintext
+   REVERSE LISTENER on the client. For plain reverse (ssh -R) the server splices
+   it to its configured reverse target; for a v0.5.0 JUMP route this same
+   listener becomes the local entry that emits OPENJ (configure the jump-list
+   with nativeSetJumps right after this call). rproto: 0=TCP, 1=UDP, 2=BOTH.
+   When rlistenPort=0, no reverse listener (backward compatible single-hop). */
 JNIEXPORT jint JNICALL
 Java_org_xnet_readb_ReadbNative_nativeAddTunnelClient (
     JNIEnv *env, jclass c, jlong h,
     jstring serverAddr, jint serverPort,
     jstring targetAddr, jint targetPort,
     jstring pskHex, jint cipher,
-    jint egressKind, jstring egressArg, jlong networkHandle, jint token)
+    jint egressKind, jstring egressArg, jlong networkHandle, jint token,
+    jstring rlistenAddr, jint rlistenPort,
+    jstring rtargetAddr, jint rtargetPort, jint rproto)
 {
     (void)c;
     Portmux *pm = (Portmux *)(intptr_t)h;
     if (!pm) return -1;
 
     char sa[128], ta[128], arg[128], pk[128];
+    char rla[128], rta[128];
     jstr (env, serverAddr, sa, sizeof sa);
     jstr (env, targetAddr, ta, sizeof ta);
     jstr (env, egressArg, arg, sizeof arg);
     jstr (env, pskHex, pk, sizeof pk);
+    jstr (env, rlistenAddr, rla, sizeof rla);
+    jstr (env, rtargetAddr, rta, sizeof rta);
 
     unsigned char psk[PM_TUNNEL_PSK_LEN];
     if (parse_psk_hex (pk, psk) < 0) {
@@ -372,12 +383,143 @@ Java_org_xnet_readb_ReadbNative_nativeAddTunnelClient (
 
     PmTunnelCipher cph = (cipher == 1) ? PM_TUNNEL_CIPHER_CHACHAPOLY
                                        : PM_TUNNEL_CIPHER_AESGCM;
-    int rc = portmux_add_tunnel_client (pm, NULL, 0,
+    /* Pass rlistenAddr/rlistenPort as the client's reverse/edge listener when
+       requested (rlistenPort>0), else NULL,0 for forward-only single-hop. */
+    const char *la = (rlistenPort > 0) ? (rla[0] ? rla : NULL) : NULL;
+    int lp = (rlistenPort > 0) ? (int)rlistenPort : 0;
+    int rc = portmux_add_tunnel_client (pm, la, lp,
                                         sa, (int)serverPort,
                                         ta[0] ? ta : "127.0.0.1", (int)targetPort,
                                         psk, cph, egp);
+    if (rc == 0 && rtargetPort > 0) {
+        /* Set the SERVER-side reverse target (where the server connects on
+           a reverse OPEN initiated by the client). */
+        if (portmux_tunnel_set_reverse_target (pm, rta[0] ? rta : "127.0.0.1",
+                                               (int)rtargetPort) < 0) {
+            LOGW ("add_tunnel: set_reverse_target failed");
+        }
+    }
+    if (rc == 0 && rlistenPort > 0) {
+        /* Set the reverse listener protocol: 0=TCP, 1=UDP, 2=BOTH. */
+        if (portmux_tunnel_set_reverse_proto (pm, (int)rproto) < 0) {
+            LOGW ("add_tunnel: set_reverse_proto failed");
+        }
+    }
     memset (psk, 0, sizeof psk);
-    LOGI ("add_tunnel rc=%d server=%s:%d target=%s:%d cipher=%d token=%d",
-          rc, sa, (int)serverPort, ta, (int)targetPort, (int)cipher, (int)token);
+    LOGI ("add_tunnel rc=%d server=%s:%d target=%s:%d cipher=%d token=%d "
+          "rev=%s:%d->%s:%d proto=%d",
+          rc, sa, (int)serverPort, ta, (int)targetPort, (int)cipher, (int)token,
+          la ? la : "(none)", lp, rta[0] ? rta : "(none)", (int)rtargetPort,
+          (int)rproto);
+    return rc;
+}
+
+/* Encrypted tunnel PEER (v0.5.0 multi-hop): a single-port peek-demux server
+   that accepts an encrypted carrier on listenAddr:listenPort and either relays
+   an OPENJ stream onward to the next hop (dialed on demand, honoring the
+   egress) or, when the jump-list is terminal, connects the final target — just
+   like a tunnel server for the single-hop case. Shares the single psk/cipher
+   with every peer in the chain. pskHex = 64 hex chars. cipher 0=AES-GCM,
+   1=ChaCha. Mirrors nativeAddTunnelClient's marshalling/logging. */
+JNIEXPORT jint JNICALL
+Java_org_xnet_readb_ReadbNative_nativeAddTunnelPeer (
+    JNIEnv *env, jclass c, jlong h,
+    jstring listenAddr, jint listenPort,
+    jstring pskHex, jint cipher,
+    jint egressKind, jstring egressArg, jlong networkHandle, jint token)
+{
+    (void)c;
+    Portmux *pm = (Portmux *)(intptr_t)h;
+    if (!pm) return -1;
+
+    char la[128], arg[128], pk[128];
+    jstr (env, listenAddr, la, sizeof la);
+    jstr (env, egressArg, arg, sizeof arg);
+    jstr (env, pskHex, pk, sizeof pk);
+
+    unsigned char psk[PM_TUNNEL_PSK_LEN];
+    if (parse_psk_hex (pk, psk) < 0) {
+        LOGW ("add_peer: bad PSK (need 64 hex chars)");
+        return -1;
+    }
+
+    PortmuxEgress eg;
+    PortmuxEgress *egp = NULL;
+    build_egress (egressKind, arg, networkHandle, token, &eg, &egp);
+
+    PmTunnelCipher cph = (cipher == 1) ? PM_TUNNEL_CIPHER_CHACHAPOLY
+                                       : PM_TUNNEL_CIPHER_AESGCM;
+    int rc = portmux_add_tunnel_peer (pm, la[0] ? la : "0.0.0.0",
+                                      (int)listenPort, psk, cph, egp);
+    memset (psk, 0, sizeof psk);
+    LOGI ("add_peer rc=%d listen=%s:%d cipher=%d token=%d",
+          rc, la, (int)listenPort, (int)cipher, (int)token);
+    return rc;
+}
+
+/* Count the comma-separated fields in a CSV (1 + number of commas for a
+   non-empty string; 0 for an empty string). */
+static int
+csv_count (const char *s)
+{
+    if (!s || !s[0]) return 0;
+    int n = 1;
+    for (const char *p = s; *p; p++)
+        if (*p == ',') n++;
+    return n;
+}
+
+/* Configure the EDGE originator's jump-list on the most-recently-added tunnel
+   route (call right after the edge nativeAddTunnelClient, which MUST have a
+   reverse listener via rlistenPort>0). hopsAddrCsv/hopsPortCsv are parallel
+   comma-separated lists of the ordered next-hops; hops[0] MUST equal the edge
+   client's carrier dest (serverAddr:serverPort). targetAddr:targetPort is the
+   final destination; proto 0=TCP/1=UDP for the final leg. nhops in 1..8. */
+JNIEXPORT jint JNICALL
+Java_org_xnet_readb_ReadbNative_nativeSetJumps (
+    JNIEnv *env, jclass c, jlong h,
+    jstring hopsAddrCsv, jstring hopsPortCsv,
+    jstring targetAddr, jint targetPort, jint proto)
+{
+    (void)c;
+    Portmux *pm = (Portmux *)(intptr_t)h;
+    if (!pm) return -1;
+
+    char addrs[1024], ports[512], ta[128];
+    jstr (env, hopsAddrCsv, addrs, sizeof addrs);
+    jstr (env, hopsPortCsv, ports, sizeof ports);
+    jstr (env, targetAddr, ta, sizeof ta);
+
+    int na = csv_count (addrs);
+    int np = csv_count (ports);
+    if (na != np || na < 1 || na > PM_MUX_MAX_HOPS) {
+        LOGW ("set_jumps: bad hop count (addrs=%d ports=%d max=%d)",
+              na, np, PM_MUX_MAX_HOPS);
+        return -1;
+    }
+
+    PmJumpEndpoint hops[PM_MUX_MAX_HOPS];
+    memset (hops, 0, sizeof hops);
+
+    /* strtok mutates its buffer; the jstr() copies are local, so this is safe. */
+    char *as = addrs, *ps = ports;
+    for (int i = 0; i < na; i++) {
+        char *atok = strtok (i == 0 ? as : NULL, ",");
+        char *ptok = strtok (i == 0 ? ps : NULL, ",");
+        if (!atok || !ptok) {
+            LOGW ("set_jumps: short CSV at hop %d", i);
+            return -1;
+        }
+        strncpy (hops[i].addr, atok, sizeof hops[i].addr - 1);
+        hops[i].addr[sizeof hops[i].addr - 1] = '\0';
+        hops[i].port = (int)strtol (ptok, NULL, 10);
+    }
+
+    int pr = (proto == 1) ? PM_MUX_PROTO_UDP : PM_MUX_PROTO_TCP;
+    int rc = portmux_tunnel_set_jumps (pm, hops, na,
+                                       ta[0] ? ta : "127.0.0.1",
+                                       (int)targetPort, pr);
+    LOGI ("set_jumps rc=%d nhops=%d target=%s:%d proto=%d first=%s:%d",
+          rc, na, ta, (int)targetPort, (int)proto, hops[0].addr, hops[0].port);
     return rc;
 }
