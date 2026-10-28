@@ -42,5 +42,21 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Userspace TCP/UDP port forwarding and encrypted tunnel" />
         </service>
+
+        <!-- adb/automation hook: run one-shot commands in the rootless Alpine
+             (PRoot). Exported, gated by a per-install secret TOKEN (see
+             AlpineCommandReceiver) rather than a signature permission — a
+             signature permission would also block `adb shell am broadcast`
+             (uid shell), defeating adb driving. The token is unreadable by
+             other apps (they can't read this app's logcat/prefs), so it blocks
+             third-party apps while allowing an operator with adb/device access.
+             Shipped in release too, per requirement. -->
+        <receiver
+            android:name=".AlpineCommandReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="org.xnet.readb.RUN_CMD" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>
