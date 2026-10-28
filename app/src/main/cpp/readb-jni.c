@@ -501,11 +501,14 @@ Java_org_xnet_readb_ReadbNative_nativeSetJumps (
     PmJumpEndpoint hops[PM_MUX_MAX_HOPS];
     memset (hops, 0, sizeof hops);
 
-    /* strtok mutates its buffer; the jstr() copies are local, so this is safe. */
-    char *as = addrs, *ps = ports;
+    /* strtok_r with SEPARATE save pointers: the two CSVs (addrs, ports) are
+       tokenized in the same loop, so plain strtok() — which has ONE global
+       cursor — would corrupt each other's state (the "short CSV at hop 1" bug
+       for >1 hop). strtok_r keeps each buffer's position independent. */
+    char *asave = NULL, *psave = NULL;
     for (int i = 0; i < na; i++) {
-        char *atok = strtok (i == 0 ? as : NULL, ",");
-        char *ptok = strtok (i == 0 ? ps : NULL, ",");
+        char *atok = strtok_r (i == 0 ? addrs : NULL, ",", &asave);
+        char *ptok = strtok_r (i == 0 ? ports : NULL, ",", &psave);
         if (!atok || !ptok) {
             LOGW ("set_jumps: short CSV at hop %d", i);
             return -1;

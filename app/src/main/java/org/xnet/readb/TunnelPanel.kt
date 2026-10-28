@@ -190,15 +190,19 @@ class TunnelPanel(
             setPadding(dp(16), 0, dp(16), dp(12))
         }
 
-        // Server IP field
-        fieldLabel(formContainer, "Remote server IP")
+        // Server IP field — single-hop ONLY. In multi-hop mode the carrier
+        // dest is the FIRST jump hop, so this field is hidden to avoid a
+        // redundant/conflicting "server" input.
+        val serverGroup = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        fieldLabel(serverGroup, "Remote server IP")
         val serverField = editField(
-            formContainer, 
-            "e.g., 192.168.1.100 or example.com", 
+            serverGroup,
+            "e.g., 192.168.1.100 or example.com",
             editing?.serverAddr ?: ""
         )
+        formContainer.addView(serverGroup)
 
-        // PSK field
+        // PSK field (shared by single-hop and multi-hop)
         fieldLabel(formContainer, "Encryption key (64 hex characters)")
         val pskField = editField(
             formContainer,
@@ -219,6 +223,8 @@ class TunnelPanel(
             isChecked = editing?.jump ?: false
         }
         formContainer.addView(jumpCheckbox)
+        // single-hop server field is irrelevant in multi-hop mode
+        serverGroup.visibility = if (jumpCheckbox.isChecked) View.GONE else View.VISIBLE
 
         // Jump sub-fields (shown/hidden with the checkbox).
         val jumpFields = LinearLayout(ctx).apply {
@@ -247,19 +253,37 @@ class TunnelPanel(
             numeric = true
         )
         formContainer.addView(jumpFields)
-        jumpCheckbox.setOnCheckedChangeListener { _, checked ->
-            jumpFields.visibility = if (checked) View.VISIBLE else View.GONE
-        }
 
-        // Echo test checkbox
+        // Echo test checkbox — single-hop ONLY (echo bypasses adb to test the
+        // encrypted pipe; it does not apply to a multi-hop jump route).
         val echoCheckbox = CheckBox(ctx).apply {
             text = "Echo test mode (bypass adb, test encryption only)"
             setTextColor(getColor(R.color.text_secondary))
             textSize = 12f
             setPadding(0, dp(12), 0, 0)
             isChecked = editing?.echo ?: false
+            visibility = if (jumpCheckbox.isChecked) View.GONE else View.VISIBLE
         }
         formContainer.addView(echoCheckbox)
+
+        jumpCheckbox.setOnCheckedChangeListener { _, checked ->
+            // Multi-hop and single-hop are mutually exclusive: show only the
+            // fields each mode uses.
+            jumpFields.visibility = if (checked) View.VISIBLE else View.GONE
+            serverGroup.visibility = if (checked) View.GONE else View.VISIBLE
+            echoCheckbox.visibility = if (checked) View.GONE else View.VISIBLE
+            if (checked) {
+                // Reveal + bring the newly-shown fields into view above the IME:
+                // focusing the first field makes the parent ScrollView scroll it
+                // on-screen (and requestRectangleOnScreen covers the keyboard case).
+                hopsField.post {
+                    hopsField.requestFocus()
+                    hopsField.requestRectangleOnScreen(
+                        android.graphics.Rect(0, 0, hopsField.width, hopsField.height), false
+                    )
+                }
+            }
+        }
 
         // Action buttons
         val buttonRow = LinearLayout(ctx).apply {
