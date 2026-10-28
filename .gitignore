@@ -21,3 +21,4 @@ local.properties
 # Local build / ops notes (not for the public repo)
 HANDOFF.md
 *.apk.sha256
+*.pre-optA.bak
