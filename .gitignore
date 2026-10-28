@@ -17,3 +17,7 @@ local.properties
 .idea/
 .DS_Store
 .kotlin/
+
+# Local build / ops notes (not for the public repo)
+HANDOFF.md
+*.apk.sha256
