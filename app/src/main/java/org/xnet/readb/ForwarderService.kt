@@ -94,7 +94,47 @@ class ForwarderService : Service() {
                     netHandle = 0L
                     token = 0
                 }
-                val rc = if (r.tunnel) {
+                val rc = if (r.peer) {
+                    // Relay PEER (v0.5.0 multi-hop): single-port peek-demux
+                    // server that forwards OPENJ to the next hop or connects
+                    // the terminal target.
+                    ReadbNative.nativeAddTunnelPeer(
+                        h, r.listenAddr, r.listenPort,
+                        r.psk, r.cipher, kind, r.egressArg, netHandle, token,
+                    )
+                } else if (r.jump) {
+                    // EDGE originator (v0.5.0 multi-hop): a tunnel client with a
+                    // local plaintext reverse listener that emits OPENJ built
+                    // from the configured jump-list. hops[0] is the carrier
+                    // dest (serverAddr:serverPort); configure the jump-list on
+                    // the just-added route with nativeSetJumps.
+                    val (tAddr, tPort) = if (r.echo) {
+                        EchoServer.start()
+                        "127.0.0.1" to EchoServer.PORT
+                    } else {
+                        r.targetAddr to r.targetPort
+                    }
+                    val crc = ReadbNative.nativeAddTunnelClient(
+                        h, r.serverAddr, r.serverPort, tAddr, tPort,
+                        r.psk, r.cipher, kind, r.egressArg, netHandle, token,
+                        // Reverse/edge listener = the local OPENJ entry point.
+                        "127.0.0.1", r.jumpListenPort, "", 0, ReadbNative.RPROTO_TCP,
+                    )
+                    if (crc != 0) {
+                        crc
+                    } else {
+                        // hops[0] must equal the carrier dest; if the stored
+                        // hop list is empty, synthesize it from the server addr.
+                        val hops = if (r.jumpHops.isEmpty())
+                            listOf("${r.serverAddr}:${r.serverPort}")
+                        else r.jumpHops
+                        val addrs = hops.joinToString(",") { it.substringBeforeLast(':') }
+                        val ports = hops.joinToString(",") { it.substringAfterLast(':') }
+                        ReadbNative.nativeSetJumps(
+                            h, addrs, ports, tAddr, tPort, r.jumpProto,
+                        )
+                    }
+                } else if (r.tunnel) {
                     // Encrypted tunnel client: dial server, splice to target.
                     // For an echo-test route, start the in-app loopback echo
                     // server and splice the tunnel to it instead of adbd.
@@ -107,6 +147,8 @@ class ForwarderService : Service() {
                     ReadbNative.nativeAddTunnelClient(
                         h, r.serverAddr, r.serverPort, tAddr, tPort,
                         r.psk, r.cipher, kind, r.egressArg, netHandle, token,
+                        // Forward-only single hop: no reverse listener.
+                        "", 0, "", 0, ReadbNative.RPROTO_TCP,
                     )
                 } else if (r.socks) {
                     // SOCKS5 proxy: no fixed target; the same egress policy is

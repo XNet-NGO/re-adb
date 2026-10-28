@@ -57,6 +57,24 @@ data class Route(
     val serverPort: Int = 0,
     val psk: String = "",
     val cipher: Int = 0,
+    /** True if this route is a multi-hop EDGE tunnel client (portmux v0.5.0):
+     *  it opens a local plaintext reverse listener on [jumpListenPort] that
+     *  emits OPENJ built from [jumpHops] + the final target
+     *  ([targetAddr]:[targetPort], [jumpProto]). The carrier dials the first
+     *  hop; [serverAddr]:[serverPort] MUST equal that first hop. */
+    val jump: Boolean = false,
+    /** Ordered next-hops as "addr:port" strings (1..8). hops[0] is the carrier
+     *  dest and MUST equal [serverAddr]:[serverPort]. */
+    val jumpHops: List<String> = emptyList(),
+    /** Local plaintext reverse-listener port for the edge OPENJ entry (>0). */
+    val jumpListenPort: Int = 0,
+    /** Final-leg proto for a jump route: 0=TCP, 1=UDP. */
+    val jumpProto: Int = 0,
+    /** True if this route is a relay PEER (portmux v0.5.0): a single-port
+     *  peek-demux server on [listenAddr]:[listenPort] that relays OPENJ to the
+     *  next hop or connects the terminal target. Shares [psk]/[cipher] with the
+     *  rest of the chain. */
+    val peer: Boolean = false,
     /** TESTING: if true this tunnel targets the in-app loopback echo server
      *  (127.0.0.1:[EchoServer.PORT]) instead of adbd, so the encrypted pipe can
      *  be verified end-to-end with plain `nc` on the box. */
@@ -71,6 +89,14 @@ data class Route(
             EgressMode.SOURCE -> "  src=$egressArg"
             EgressMode.DEVICE -> "  dev=$egressArg"
             EgressMode.NETWORK -> "  via ${transport.name.lowercase()}"
+        }
+        if (peer) {
+            return "peer    $listenAddr:$listenPort  (relay, encrypted)$eg"
+        }
+        if (jump) {
+            val tgt = if (echo) "echo-test" else "$targetAddr:$targetPort"
+            val chain = jumpHops.joinToString(" → ")
+            return "jump    :$jumpListenPort ⇒ $chain ⇒ $tgt  (encrypted)$eg"
         }
         if (tunnel) {
             val tgt = if (echo) "echo-test" else "$targetAddr:$targetPort"

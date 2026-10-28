@@ -206,6 +206,51 @@ class TunnelPanel(
             editing?.psk ?: ""
         )
 
+        // ── Multi-hop (jump) mode (portmux v0.5.0) ──
+        // A jump route relays the forward stream across one or more relay
+        // PEERs before the final target. The first hop MUST equal the remote
+        // server above (it is the carrier dest). A local plaintext entry port
+        // emits OPENJ; leave the hops blank for an ordinary single-hop tunnel.
+        val jumpCheckbox = CheckBox(ctx).apply {
+            text = "Multi-hop jump route (relay via peers)"
+            setTextColor(getColor(R.color.text_secondary))
+            textSize = 12f
+            setPadding(0, dp(12), 0, 0)
+            isChecked = editing?.jump ?: false
+        }
+        formContainer.addView(jumpCheckbox)
+
+        // Jump sub-fields (shown/hidden with the checkbox).
+        val jumpFields = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = if (jumpCheckbox.isChecked) View.VISIBLE else View.GONE
+        }
+        fieldLabel(jumpFields, "Jump hops (comma-separated addr:port, max 8)")
+        val hopsField = editField(
+            jumpFields,
+            "e.g., 10.0.0.1:2222,10.0.0.2:2222",
+            editing?.jumpHops?.joinToString(",") ?: ""
+        )
+        fieldLabel(jumpFields, "Final target (addr:port)")
+        val jumpTargetField = editField(
+            jumpFields,
+            "e.g., 127.0.0.1:5555",
+            editing?.let { e ->
+                if (e.jump && e.targetPort > 0) "${e.targetAddr}:${e.targetPort}" else ""
+            } ?: ""
+        )
+        fieldLabel(jumpFields, "Local entry (reverse-listen) port")
+        val jumpListenField = editField(
+            jumpFields,
+            "e.g., 6000",
+            editing?.jumpListenPort?.takeIf { it > 0 }?.toString() ?: "",
+            numeric = true
+        )
+        formContainer.addView(jumpFields)
+        jumpCheckbox.setOnCheckedChangeListener { _, checked ->
+            jumpFields.visibility = if (checked) View.VISIBLE else View.GONE
+        }
+
         // Echo test checkbox
         val echoCheckbox = CheckBox(ctx).apply {
             text = "Echo test mode (bypass adb, test encryption only)"
@@ -240,7 +285,7 @@ class TunnelPanel(
             val serverAddr = serverField.text.toString().trim()
             val psk = pskField.text.toString().trim()
             
-            if (serverAddr.isBlank()) {
+            if (!jumpCheckbox.isChecked && serverAddr.isBlank()) {
                 toast("Server IP is required")
                 return@actionButton
             }
@@ -251,8 +296,59 @@ class TunnelPanel(
             }
 
             val base = editing ?: Route()
+
+            if (jumpCheckbox.isChecked) {
+                // Multi-hop jump route: validate hops + target + entry port.
+                val hops = hopsField.text.toString().trim()
+                    .split(',')
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() }
+                if (hops.isEmpty() || hops.size > ReadbNative.MAX_HOPS) {
+                    toast("Enter 1 to ${ReadbNative.MAX_HOPS} jump hops (addr:port)")
+                    return@actionButton
+                }
+                if (hops.any { it.substringAfterLast(':', "").toIntOrNull() == null }) {
+                    toast("Each hop must be addr:port")
+                    return@actionButton
+                }
+                val first = hops.first()
+                val firstAddr = first.substringBeforeLast(':')
+                val firstPort = first.substringAfterLast(':').toIntOrNull() ?: 0
+                val target = jumpTargetField.text.toString().trim()
+                val tAddr = target.substringBeforeLast(':', "")
+                val tPort = target.substringAfterLast(':', "").toIntOrNull() ?: 0
+                val listenPort = jumpListenField.text.toString().trim().toIntOrNull() ?: 0
+                if (tAddr.isBlank() || tPort <= 0) {
+                    toast("Final target must be addr:port")
+                    return@actionButton
+                }
+                if (listenPort <= 0) {
+                    toast("Local entry port is required")
+                    return@actionButton
+                }
+                upsert(base.copy(
+                    tunnel = false, socks = false, peer = false,
+                    jump = true,
+                    jumpHops = hops,
+                    jumpListenPort = listenPort,
+                    jumpProto = ReadbNative.PROTO_TCP,
+                    // First hop is the carrier dest; keep server fields in sync.
+                    serverAddr = firstAddr,
+                    serverPort = firstPort,
+                    targetAddr = tAddr,
+                    targetPort = tPort,
+                    psk = psk,
+                    echo = false,
+                ))
+                toast(if (editing != null) "Jump route saved" else "Jump route added")
+                if (editing != null && editing.enabled && isRunning()) onRestart()
+                return@actionButton
+            }
+
             upsert(base.copy(
                 tunnel = true,
+                jump = false,
+                peer = false,
                 serverAddr = serverAddr,
                 serverPort = TUNNEL_SERVER_PORT,
                 targetAddr = "127.0.0.1",
