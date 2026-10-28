@@ -6,112 +6,163 @@
     android:orientation="vertical"
     android:background="@color/background_primary">
 
-    <!-- ===== TOP: Tunnels & ports (fixed height, static) ===== -->
+    <!-- ===== Tunnels & ports header (title + status + start/stop) ===== -->
     <LinearLayout
-        android:id="@+id/tunnelSection"
         android:layout_width="match_parent"
-        android:layout_height="320dp"
-        android:orientation="vertical"
-        android:background="@color/background_secondary">
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="@color/background_elevated"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="12dp"
+        android:elevation="2dp">
 
-        <!-- Header row: title + status + start/stop button -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Tunnels &amp; ports"
+            style="@style/TextHeader"/>
+
+        <TextView
+            android:id="@+id/tunnelStatus"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="end"
+            style="@style/TextStatus"
+            android:paddingHorizontal="12dp"
+            android:text="Stopped"/>
+
+        <Button
+            android:id="@+id/btnStartStop"
+            style="@style/ButtonStartStop"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Start"
+            android:textColor="@color/accent_green"/>
+    </LinearLayout>
+
+    <!-- ===== Routes list + tunnel form — fills the screen ===== -->
+    <!-- Takes all remaining vertical space (weight=1). A ScrollView wrapper
+         means that when the keyboard is up (or the multi-hop form is expanded
+         taller than the viewport) the fields remain reachable — the focused
+         EditText is scrolled into view — while with the keyboard down
+         everything fits without visible scrolling. -->
+    <ScrollView
+        android:id="@+id/routeScroll"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="@color/background_secondary"
+        android:fillViewport="true"
+        android:scrollbars="vertical"
+        android:fadeScrollbars="false">
+
+        <LinearLayout
+            android:id="@+id/routeList"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingBottom="8dp"/>
+    </ScrollView>
+
+    <!-- Divider -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/divider_medium"/>
+
+    <!-- ===== One-shot Alpine prompt (compact, fixed) ===== -->
+    <LinearLayout
+        android:id="@+id/promptSection"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@color/background_secondary"
+        android:paddingHorizontal="12dp"
+        android:paddingVertical="8dp">
+
+        <!-- command input + Run -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:background="@color/background_elevated"
-            android:paddingHorizontal="16dp"
-            android:paddingVertical="12dp"
-            android:elevation="2dp">
-            
+            android:gravity="center_vertical">
+
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Tunnels &amp; ports"
-                style="@style/TextHeader"/>
-            
-            <TextView
-                android:id="@+id/tunnelStatus"
+                android:text="alpine$"
+                android:fontFamily="monospace"
+                android:textColor="@color/accent_green"
+                android:textSize="14sp"
+                android:paddingEnd="8dp"/>
+
+            <EditText
+                android:id="@+id/cmdInput"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:gravity="end"
-                style="@style/TextStatus"
-                android:paddingHorizontal="12dp"
-                android:text="Stopped"/>
-            
-            <Button 
-                android:id="@+id/btnStartStop"
+                android:hint="run a command…"
+                android:fontFamily="monospace"
+                android:textSize="14sp"
+                android:textColor="@color/text_primary"
+                android:textColorHint="@color/text_secondary"
+                android:inputType="text|textNoSuggestions"
+                android:imeOptions="actionGo"
+                android:maxLines="1"
+                android:importantForAutofill="no"/>
+
+            <Button
+                android:id="@+id/btnRun"
                 style="@style/ButtonStartStop"
-                android:layout_width="wrap_content" 
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Start" 
+                android:text="Run"
                 android:textColor="@color/accent_green"/>
         </LinearLayout>
 
-        <!-- Tunnel config + saved routes list (built in code by TunnelPanel) -->
+        <!-- small output / confirmation window (fixed height, scrolls only if
+             a single command overflows; the common case is a short line) -->
         <ScrollView
+            android:id="@+id/cmdOutputScroll"
             android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:scrollbars="vertical"
-            android:fadeScrollbars="false">
-            
-            <LinearLayout
-                android:id="@+id/routeList"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:paddingBottom="8dp"/>
-        </ScrollView>
-    </LinearLayout>
+            android:layout_height="96dp"
+            android:layout_marginTop="6dp"
+            android:background="@color/background_primary"
+            android:fillViewport="true"
+            android:scrollbars="vertical">
 
-    <!-- Divider between tunnel section and terminal -->
-    <View 
-        android:layout_width="match_parent" 
-        android:layout_height="1dp"
-        android:background="@color/divider_medium"/>
-
-    <!-- ===== Alpine terminal (fills remaining space) ===== -->
-    <FrameLayout
-        android:id="@+id/terminalSection"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1">
-        
-        <org.xnet.readb.terminal.view.TerminalView
-            android:id="@+id/terminalView"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:focusable="true"
-            android:focusableInTouchMode="true"/>
-        
-        <!-- Bootstrap overlay (first-run Alpine setup progress) -->
-        <ScrollView
-            android:id="@+id/bootstrapOverlay"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:background="#CC000000"
-            android:visibility="gone">
-            
             <TextView
-                android:id="@+id/bootstrapLog"
+                android:id="@+id/cmdOutput"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:fontFamily="monospace"
-                android:textColor="#C8E6C9"
+                android:textColor="@color/text_primary"
                 android:textSize="12sp"
-                android:padding="16dp"/>
+                android:padding="8dp"
+                android:textIsSelectable="true"
+                android:text=""/>
         </ScrollView>
-    </FrameLayout>
+    </LinearLayout>
 
-    <!-- Extra keys row for terminal (ESC, TAB, CTRL, ALT, arrows, etc.) -->
-    <LinearLayout
-        android:id="@+id/extraKeys"
+    <!-- Bootstrap overlay (first-run Alpine setup progress) -->
+    <ScrollView
+        android:id="@+id/bootstrapOverlay"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:background="@color/key_background"/>
+        android:maxHeight="200dp"
+        android:background="#CC000000"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/bootstrapLog"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:textColor="#C8E6C9"
+            android:textSize="12sp"
+            android:padding="16dp"/>
+    </ScrollView>
 
 </LinearLayout>

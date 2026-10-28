@@ -4,8 +4,9 @@ import android.Manifest
 import android.os.Build
 import android.os.Bundle
 import android.view.View
+import android.view.inputmethod.EditorInfo
 import android.widget.Button
-import android.widget.LinearLayout
+import android.widget.EditText
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
@@ -13,33 +14,37 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
-import com.termux.terminal.TerminalSession
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.xnet.readb.shell.ProotBootstrap
-import org.xnet.readb.terminal.ReadbClient
-import org.xnet.readb.terminal.ReadbTerminal
-import org.xnet.readb.terminal.view.TerminalView
+import org.xnet.readb.shell.ProotExecutor
 
 /**
- * re-adb main screen, one combined view:
- *   • top 1/3 — Tunnels & ports: simple accordion forms (Forward / SOCKS5 /
- *     Tunnel) with validated inputs, an active-routes list, and Start/Stop.
- *   • bottom 2/3 — a PTY terminal running rootless Alpine (PRoot); first run
- *     bootstraps the Alpine rootfs from XNet-NGO/deps.
- * Edge-to-edge, with system-bar insets applied as padding.
+ * re-adb main screen, one no-scroll view:
+ *   • top — Tunnels & ports: the saved-routes list fills the screen so every
+ *     tunnel/port is visible at once (no scrolling), plus Start/Stop.
+ *   • bottom — a compact ONE-SHOT Alpine prompt: type a command, Run, and a
+ *     small confirmation window shows its output. No interactive PTY.
+ *
+ * The one-shot model (ProotExecutor.exec) replaces the full Termux terminal:
+ * it reclaims ~2/3 of the screen for the tunnel UI and is all most operators
+ * need (apk add, quick checks, scripts). Non-interactive automation still goes
+ * through AlpineCommandReceiver over adb.
  */
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var terminalView: TerminalView
     private lateinit var tunnelStatus: TextView
     private lateinit var bootstrapOverlay: ScrollView
     private lateinit var bootstrapLog: TextView
+    private lateinit var cmdInput: EditText
+    private lateinit var cmdOutput: TextView
+    private lateinit var cmdOutputScroll: ScrollView
+    private lateinit var btnRun: Button
     private lateinit var panel: TunnelPanel
-    private var session: TerminalSession? = null
     private var running = false
+    private var alpineReady = false
     private val scope = CoroutineScope(Dispatchers.Main)
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -56,10 +61,13 @@ class MainActivity : AppCompatActivity() {
             insets
         }
 
-        terminalView = findViewById(R.id.terminalView)
         tunnelStatus = findViewById(R.id.tunnelStatus)
         bootstrapOverlay = findViewById(R.id.bootstrapOverlay)
         bootstrapLog = findViewById(R.id.bootstrapLog)
+        cmdInput = findViewById(R.id.cmdInput)
+        cmdOutput = findViewById(R.id.cmdOutput)
+        cmdOutputScroll = findViewById(R.id.cmdOutputScroll)
+        btnRun = findViewById(R.id.btnRun)
 
         panel = TunnelPanel(
             findViewById(R.id.routeList),
@@ -71,16 +79,28 @@ class MainActivity : AppCompatActivity() {
 
         findViewById<Button>(R.id.btnStartStop).setOnClickListener { toggleForwarder(it as Button) }
 
+        // one-shot prompt wiring
+        btnRun.setOnClickListener { runCommand() }
+        cmdInput.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_GO) { runCommand(); true } else false
+        }
+        setPromptEnabled(false)
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
         }
 
-        bootstrapAndStartTerminal()
+        bootstrapAlpine()
     }
 
-    // ── Terminal + Alpine bootstrap ──
-    private fun bootstrapAndStartTerminal() {
-        if (ProotBootstrap.isInstalled(this)) { startTerminal(); return }
+    // ── Alpine bootstrap (needed before the one-shot prompt can exec) ──
+    private fun bootstrapAlpine() {
+        if (ProotBootstrap.isInstalled(this)) {
+            alpineReady = true
+            setPromptEnabled(true)
+            cmdOutput.text = "Alpine ready. Type a command and tap Run."
+            return
+        }
         bootstrapOverlay.visibility = View.VISIBLE
         appendLog("re-adb: first run — bootstrapping Alpine (PRoot)...\n")
         scope.launch {
@@ -88,37 +108,47 @@ class MainActivity : AppCompatActivity() {
                 ProotBootstrap.setup(this@MainActivity) { line -> scope.launch { appendLog("$line\n") } }
             }
             if (ok) {
-                appendLog("\nAlpine ready. Launching shell...\n")
+                appendLog("\nAlpine ready.\n")
                 bootstrapOverlay.visibility = View.GONE
-                startTerminal()
+                alpineReady = true
+                setPromptEnabled(true)
+                cmdOutput.text = "Alpine ready. Type a command and tap Run."
             } else {
                 appendLog("\nBootstrap FAILED — see log above.\n")
             }
         }
     }
 
-    private fun startTerminal() {
-        val client = ReadbClient(
-            terminalView,
-            onRedraw = { terminalView.onScreenUpdated() },
-            ctrlDown = { ctrlArmedOrLocked() },
-            altDown = { altArmedOrLocked() },
-        )
-        val s = try {
-            ReadbTerminal.newAlpineSession(this, client)
-        } catch (t: Throwable) {
-            appendLog("terminal error: ${t.message}\n"); bootstrapOverlay.visibility = View.VISIBLE
-            return
-        }
-        session = s
-        terminalView.setTerminalViewClient(client)
-        terminalView.attachSession(s)
-        terminalView.setTextSize(28)
-        terminalView.requestFocus()
-        setupExtraKeys()
+    private fun appendLog(s: String) { bootstrapLog.append(s) }
+
+    // ── One-shot command prompt ──
+    private fun setPromptEnabled(on: Boolean) {
+        cmdInput.isEnabled = on
+        btnRun.isEnabled = on
+        btnRun.alpha = if (on) 1f else 0.4f
+        if (!on && !alpineReady) cmdOutput.text = "Preparing Alpine…"
     }
 
-    private fun appendLog(s: String) { bootstrapLog.append(s) }
+    private fun runCommand() {
+        if (!alpineReady) return
+        val cmd = cmdInput.text.toString().trim()
+        if (cmd.isEmpty()) return
+        setPromptEnabled(false)
+        cmdOutput.text = "$ $cmd\n…"
+        scope.launch {
+            val out = withContext(Dispatchers.IO) {
+                try { ProotExecutor.exec(this@MainActivity, cmd, 30_000) }
+                catch (t: Throwable) { "error: ${t.message}" }
+            }
+            val shown = if (out.isBlank()) "(no output)" else out.trimEnd()
+            cmdOutput.text = "$ $cmd\n$shown"
+            // keep the newest output in view
+            cmdOutputScroll.post { cmdOutputScroll.fullScroll(View.FOCUS_DOWN) }
+            cmdInput.text?.clear()
+            setPromptEnabled(true)
+            cmdInput.requestFocus()
+        }
+    }
 
     // ── Tunnels / ports ──
     private fun updateStatus() {
@@ -129,15 +159,12 @@ class MainActivity : AppCompatActivity() {
     /**
      * Re-apply the enabled route set. The native engine's routes are fixed at
      * run(), so a change (enable/disable/edit/delete of a running route) means
-     * stop + start. Called by per-route Start/Stop/Edit/Delete. If no routes
-     * are enabled, the forwarder is left stopped.
+     * stop + start. Called by per-route Start/Stop/Edit/Delete.
      */
     private fun restartForwarder() {
         val enabled = RouteStore.load(this).count { it.enabled }
-        // Always stop first so the engine tears down cleanly.
         if (running) { ForwarderService.stop(this); running = false }
         if (enabled > 0) {
-            // Give the old service a moment to release the engine before restart.
             scope.launch {
                 withContext(Dispatchers.IO) { Thread.sleep(300) }
                 ForwarderService.start(this@MainActivity); running = true
@@ -152,10 +179,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun syncStartStopButton() {
         val btn = findViewById<Button>(R.id.btnStartStop)
-        if (running) { 
+        if (running) {
             btn.text = "Stop"
             btn.setTextColor(ContextCompat.getColor(this, R.color.accent_red))
-        } else { 
+        } else {
             btn.text = "Start"
             btn.setTextColor(ContextCompat.getColor(this, R.color.accent_green))
         }
@@ -176,15 +203,12 @@ class MainActivity : AppCompatActivity() {
             ForwarderService.start(this); running = true
             syncStartStopButton()
             updateStatus()
-            // For tunnel routes, probe the server's reachability so the UI can
-            // tell "connected-ish" from "can't reach server" (firewall/NAT).
             enabled.firstOrNull { it.tunnel }?.let { probeTunnel(it) }
         }
     }
 
     /** Best-effort TCP reachability probe to the tunnel server, off the main
-     *  thread. Updates the status line; does NOT prove the Noise handshake, only
-     *  that the server port is reachable (the common failure is it is not). */
+     *  thread. Updates the status line; does NOT prove the Noise handshake. */
     private fun probeTunnel(r: Route) {
         tunnelStatus.text = "Tunnel: reaching ${r.serverAddr}:${r.serverPort}…"
         scope.launch {
@@ -201,97 +225,5 @@ class MainActivity : AppCompatActivity() {
             else
                 "Tunnel: CANNOT reach ${r.serverAddr}:${r.serverPort} (server down or port closed/firewalled)"
         }
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        session?.finishIfRunning()
-    }
-
-    // ── Extra keys row (ported from ShellBox) ──
-    private enum class StickyState { IDLE, ARMED, LOCKED }
-    private data class StickyKey(
-        val label: String, val isModifier: Boolean, val seq: String = "",
-        var state: StickyState = StickyState.IDLE, var view: TextView? = null,
-    )
-
-    private val stickyKeys = listOf(
-        StickyKey("ESC", false, "\u001b"),
-        StickyKey("TAB", false, "\t"),
-        StickyKey("CTRL", true),
-        StickyKey("ALT", true),
-        StickyKey("↑", false, "\u001b[A"),
-        StickyKey("↓", false, "\u001b[B"),
-        StickyKey("←", false, "\u001b[D"),
-        StickyKey("→", false, "\u001b[C"),
-        StickyKey("HOME", false, "\u001b[H"),
-        StickyKey("END", false, "\u001b[F"),
-        StickyKey("DEL", false, "\u001b[3~"),
-    )
-
-    private fun ctrlArmedOrLocked() = stickyKeys.first { it.label == "CTRL" }.state != StickyState.IDLE
-    private fun altArmedOrLocked() = stickyKeys.first { it.label == "ALT" }.state != StickyState.IDLE
-
-    private fun refreshSticky(k: StickyKey) {
-        k.view?.setBackgroundColor(
-            when (k.state) {
-                StickyState.IDLE -> ContextCompat.getColor(this, R.color.key_background)
-                StickyState.ARMED -> ContextCompat.getColor(this, R.color.key_armed_bg)
-                StickyState.LOCKED -> ContextCompat.getColor(this, R.color.key_locked_bg)
-            }
-        )
-        k.view?.setTextColor(
-            when (k.state) {
-                StickyState.IDLE -> ContextCompat.getColor(this, R.color.key_text)
-                StickyState.ARMED -> ContextCompat.getColor(this, R.color.key_armed_text)
-                StickyState.LOCKED -> ContextCompat.getColor(this, R.color.key_locked_text)
-            }
-        )
-    }
-
-    private fun setupExtraKeys() {
-        val row = findViewById<LinearLayout>(R.id.extraKeys)
-        row.removeAllViews()
-        val d = resources.displayMetrics.density
-        stickyKeys.forEach { key ->
-            val tv = TextView(this).apply {
-                text = key.label; textSize = 12f
-                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.key_text))
-                gravity = android.view.Gravity.CENTER
-                typeface = android.graphics.Typeface.MONOSPACE
-                setBackgroundColor(ContextCompat.getColor(this@MainActivity, R.color.key_background))
-                layoutParams = LinearLayout.LayoutParams(0, (40 * d).toInt(), 1f).apply {
-                    marginEnd = (1 * d).toInt()
-                }
-                setOnClickListener {
-                    if (key.isModifier) {
-                        key.state = when (key.state) {
-                            StickyState.IDLE -> StickyState.ARMED
-                            StickyState.ARMED -> StickyState.LOCKED
-                            StickyState.LOCKED -> StickyState.IDLE
-                        }
-                        refreshSticky(key)
-                    } else {
-                        sendKey(key.seq)
-                    }
-                }
-            }
-            key.view = tv
-            row.addView(tv)
-        }
-    }
-
-    private fun sendKey(data: String) {
-        val s = session ?: return
-        val ctrl = stickyKeys.first { it.label == "CTRL" }
-        val alt = stickyKeys.first { it.label == "ALT" }
-        if (ctrl.state != StickyState.IDLE && data.length == 1) {
-            val code = data[0].lowercaseChar().code - 'a'.code + 1
-            if (code in 1..26) s.write(byteArrayOf(code.toByte()), 0, 1) else s.write(data)
-        } else {
-            s.write(data)
-        }
-        // clear ARMED (single-shot) modifiers after use
-        listOf(ctrl, alt).forEach { if (it.state == StickyState.ARMED) { it.state = StickyState.IDLE; refreshSticky(it) } }
     }
 }

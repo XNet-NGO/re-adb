@@ -13,7 +13,7 @@ plugins {
 //     XNet-NGO/deps "native-latest"  -> app/src/main/jniLibs/<abi>/*.so
 // The Alpine rootfs itself is downloaded at runtime (ProotBootstrap) from
 // XNet-NGO/deps "rootfs-alpine-3.21.3".
-val portmuxVersion = (project.findProperty("portmuxVersion") as String?) ?: "v0.5.0"
+val portmuxVersion = (project.findProperty("portmuxVersion") as String?) ?: "v0.6.1"
 val portmuxRepo = "XNet-NGO/portmux"
 val abis = listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
 val portmuxDir = layout.projectDirectory.dir(".portmux")
@@ -81,8 +81,8 @@ android {
         applicationId = "org.xnet.readb"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.2.1"
         ndk { abiFilters += abis }
         externalNativeBuild {
             cmake {
