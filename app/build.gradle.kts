@@ -81,8 +81,8 @@ android {
         applicationId = "org.xnet.readb"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
         ndk { abiFilters += abis }
         externalNativeBuild {
             cmake {
@@ -103,6 +103,23 @@ android {
         jniLibs { useLegacyPackaging = true } // PRoot .so must be extracted to run
     }
 
+    signingConfigs {
+        create("release") {
+            // Credentials come from the environment, never hardcoded in the
+            // repo. Set XNET_KEYSTORE / XNET_KEYSTORE_PASS / XNET_KEY_ALIAS
+            // (see XNet-NGO/xnet-keystore). When unset, release builds are
+            // produced unsigned.
+            val ksPath = System.getenv("XNET_KEYSTORE")
+            if (ksPath != null) {
+                storeFile = file(ksPath)
+                storePassword = System.getenv("XNET_KEYSTORE_PASS")
+                keyAlias = System.getenv("XNET_KEY_ALIAS") ?: "xnet-key"
+                keyPassword = System.getenv("XNET_KEY_PASS")
+                    ?: System.getenv("XNET_KEYSTORE_PASS")
+            }
+        }
+    }
+
     buildTypes {
         debug { isDebuggable = true }
         release {
@@ -111,6 +128,9 @@ android {
             // key when the env is set (see Switchboard), else unsigned.
             isMinifyEnabled = false
             isDebuggable = true
+            if (System.getenv("XNET_KEYSTORE") != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 
