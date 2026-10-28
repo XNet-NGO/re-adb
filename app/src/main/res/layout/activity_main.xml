@@ -4,84 +4,97 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="#000000">
+    android:background="@color/background_primary">
 
-    <!-- ===== TOP 1/3: Tunnels & ports ===== -->
+    <!-- ===== TOP: Tunnels & ports (fixed height, static) ===== -->
     <LinearLayout
         android:id="@+id/tunnelSection"
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
+        android:layout_height="320dp"
         android:orientation="vertical"
-        android:background="#0A0A0A">
+        android:background="@color/background_secondary">
 
-        <!-- header row: title + start/stop -->
+        <!-- Header row: title + status + start/stop button -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
             android:gravity="center_vertical"
-            android:background="#1E1E1E"
-            android:paddingHorizontal="12dp">
+            android:background="@color/background_elevated"
+            android:paddingHorizontal="16dp"
+            android:paddingVertical="12dp"
+            android:elevation="2dp">
+            
             <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Tunnels &amp; ports"
+                style="@style/TextHeader"/>
+            
+            <TextView
+                android:id="@+id/tunnelStatus"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="Tunnels &amp; ports"
-                android:textColor="#FFFFFF"
-                android:textStyle="bold"
-                android:paddingVertical="10dp"/>
-            <TextView
-                android:id="@+id/tunnelStatus"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:textColor="#AAAAAA"
-                android:textSize="12sp"
-                android:paddingEnd="12dp"
+                android:gravity="end"
+                style="@style/TextStatus"
+                android:paddingHorizontal="12dp"
                 android:text="Stopped"/>
-            <Button android:id="@+id/btnStartStop"
-                android:layout_width="wrap_content" android:layout_height="40dp"
-                android:text="Start" android:textColor="#4CAF50"
-                android:background="@android:color/transparent"/>
+            
+            <Button 
+                android:id="@+id/btnStartStop"
+                style="@style/ButtonStartStop"
+                android:layout_width="wrap_content" 
+                android:layout_height="wrap_content"
+                android:text="Start" 
+                android:textColor="@color/accent_green"/>
         </LinearLayout>
 
-        <!-- Everything (accordions + active routes) is built in code into this
-             scrollable container by TunnelPanel. -->
+        <!-- Tunnel config + saved routes list (built in code by TunnelPanel) -->
         <ScrollView
             android:layout_width="match_parent"
             android:layout_height="0dp"
-            android:layout_weight="1">
+            android:layout_weight="1"
+            android:scrollbars="vertical"
+            android:fadeScrollbars="false">
+            
             <LinearLayout
                 android:id="@+id/routeList"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:paddingBottom="12dp"/>
+                android:paddingBottom="8dp"/>
         </ScrollView>
     </LinearLayout>
 
-    <View android:layout_width="match_parent" android:layout_height="1dp"
-        android:background="#333333"/>
+    <!-- Divider between tunnel section and terminal -->
+    <View 
+        android:layout_width="match_parent" 
+        android:layout_height="1dp"
+        android:background="@color/divider_medium"/>
 
-    <!-- ===== BOTTOM 2/3: Alpine terminal ===== -->
+    <!-- ===== Alpine terminal (fills remaining space) ===== -->
     <FrameLayout
         android:id="@+id/terminalSection"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1">
+        
         <org.xnet.readb.terminal.view.TerminalView
             android:id="@+id/terminalView"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:focusable="true"
             android:focusableInTouchMode="true"/>
-        <!-- Bootstrap / status overlay -->
+        
+        <!-- Bootstrap overlay (first-run Alpine setup progress) -->
         <ScrollView
             android:id="@+id/bootstrapOverlay"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:background="#CC000000"
             android:visibility="gone">
+            
             <TextView
                 android:id="@+id/bootstrapLog"
                 android:layout_width="match_parent"
@@ -89,16 +102,16 @@
                 android:fontFamily="monospace"
                 android:textColor="#C8E6C9"
                 android:textSize="12sp"
-                android:padding="12dp"/>
+                android:padding="16dp"/>
         </ScrollView>
     </FrameLayout>
 
-    <!-- Extra keys row for the terminal -->
+    <!-- Extra keys row for terminal (ESC, TAB, CTRL, ALT, arrows, etc.) -->
     <LinearLayout
         android:id="@+id/extraKeys"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:background="#020817"/>
+        android:background="@color/key_background"/>
 
 </LinearLayout>

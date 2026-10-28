@@ -9,6 +9,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -60,7 +61,12 @@ class MainActivity : AppCompatActivity() {
         bootstrapOverlay = findViewById(R.id.bootstrapOverlay)
         bootstrapLog = findViewById(R.id.bootstrapLog)
 
-        panel = TunnelPanel(findViewById(R.id.routeList)) { updateStatus() }
+        panel = TunnelPanel(
+            findViewById(R.id.routeList),
+            onChanged = { updateStatus() },
+            onRestart = { restartForwarder() },
+            isRunning = { running },
+        )
         panel.render()
 
         findViewById<Button>(R.id.btnStartStop).setOnClickListener { toggleForwarder(it as Button) }
@@ -116,24 +122,63 @@ class MainActivity : AppCompatActivity() {
 
     // ── Tunnels / ports ──
     private fun updateStatus() {
-        val n = RouteStore.load(this).size
-        tunnelStatus.text = if (running) "Running · $n route(s)" else "Stopped · $n route(s)"
+        val enabled = RouteStore.load(this).count { it.enabled }
+        tunnelStatus.text = if (running) "Running · $enabled on" else "Stopped · $enabled on"
+    }
+
+    /**
+     * Re-apply the enabled route set. The native engine's routes are fixed at
+     * run(), so a change (enable/disable/edit/delete of a running route) means
+     * stop + start. Called by per-route Start/Stop/Edit/Delete. If no routes
+     * are enabled, the forwarder is left stopped.
+     */
+    private fun restartForwarder() {
+        val enabled = RouteStore.load(this).count { it.enabled }
+        // Always stop first so the engine tears down cleanly.
+        if (running) { ForwarderService.stop(this); running = false }
+        if (enabled > 0) {
+            // Give the old service a moment to release the engine before restart.
+            scope.launch {
+                withContext(Dispatchers.IO) { Thread.sleep(300) }
+                ForwarderService.start(this@MainActivity); running = true
+                syncStartStopButton()
+                updateStatus()
+                RouteStore.load(this@MainActivity).firstOrNull { it.enabled && it.tunnel }?.let { probeTunnel(it) }
+            }
+        }
+        syncStartStopButton()
+        updateStatus()
+    }
+
+    private fun syncStartStopButton() {
+        val btn = findViewById<Button>(R.id.btnStartStop)
+        if (running) { 
+            btn.text = "Stop"
+            btn.setTextColor(ContextCompat.getColor(this, R.color.accent_red))
+        } else { 
+            btn.text = "Start"
+            btn.setTextColor(ContextCompat.getColor(this, R.color.accent_green))
+        }
     }
 
     private fun toggleForwarder(btn: Button) {
         if (running) {
             ForwarderService.stop(this); running = false
-            btn.text = "Start"; btn.setTextColor(0xFF4CAF50.toInt())
+            syncStartStopButton()
             updateStatus()
         } else {
-            val routes = RouteStore.load(this)
-            if (routes.isEmpty()) { tunnelStatus.text = "Add a route first"; return }
+            val enabled = RouteStore.load(this).filter { it.enabled }
+            if (enabled.isEmpty()) {
+                tunnelStatus.text = "No enabled tunnels — add/Start one"
+                return
+            }
+            android.util.Log.i("re-adb", "Start tapped -> starting ForwarderService with ${enabled.size} enabled route(s)")
             ForwarderService.start(this); running = true
-            btn.text = "Stop"; btn.setTextColor(0xFFF44336.toInt())
+            syncStartStopButton()
             updateStatus()
             // For tunnel routes, probe the server's reachability so the UI can
             // tell "connected-ish" from "can't reach server" (firewall/NAT).
-            routes.firstOrNull { it.tunnel }?.let { probeTunnel(it) }
+            enabled.firstOrNull { it.tunnel }?.let { probeTunnel(it) }
         }
     }
 
@@ -190,16 +235,16 @@ class MainActivity : AppCompatActivity() {
     private fun refreshSticky(k: StickyKey) {
         k.view?.setBackgroundColor(
             when (k.state) {
-                StickyState.IDLE -> 0xFF0F1729.toInt()
-                StickyState.ARMED -> 0xFF1A3A1A.toInt()
-                StickyState.LOCKED -> 0xFF3A1A1A.toInt()
+                StickyState.IDLE -> ContextCompat.getColor(this, R.color.key_background)
+                StickyState.ARMED -> ContextCompat.getColor(this, R.color.key_armed_bg)
+                StickyState.LOCKED -> ContextCompat.getColor(this, R.color.key_locked_bg)
             }
         )
         k.view?.setTextColor(
             when (k.state) {
-                StickyState.IDLE -> 0xFFF8FAFC.toInt()
-                StickyState.ARMED -> 0xFF88FF88.toInt()
-                StickyState.LOCKED -> 0xFFFF8888.toInt()
+                StickyState.IDLE -> ContextCompat.getColor(this, R.color.key_text)
+                StickyState.ARMED -> ContextCompat.getColor(this, R.color.key_armed_text)
+                StickyState.LOCKED -> ContextCompat.getColor(this, R.color.key_locked_text)
             }
         )
     }
@@ -211,9 +256,10 @@ class MainActivity : AppCompatActivity() {
         stickyKeys.forEach { key ->
             val tv = TextView(this).apply {
                 text = key.label; textSize = 12f
-                setTextColor(0xFFF8FAFC.toInt()); gravity = android.view.Gravity.CENTER
+                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.key_text))
+                gravity = android.view.Gravity.CENTER
                 typeface = android.graphics.Typeface.MONOSPACE
-                setBackgroundColor(0xFF0F1729.toInt())
+                setBackgroundColor(ContextCompat.getColor(this@MainActivity, R.color.key_background))
                 layoutParams = LinearLayout.LayoutParams(0, (40 * d).toInt(), 1f).apply {
                     marginEnd = (1 * d).toInt()
                 }

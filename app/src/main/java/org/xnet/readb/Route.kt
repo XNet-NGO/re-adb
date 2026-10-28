@@ -57,6 +57,13 @@ data class Route(
     val serverPort: Int = 0,
     val psk: String = "",
     val cipher: Int = 0,
+    /** TESTING: if true this tunnel targets the in-app loopback echo server
+     *  (127.0.0.1:[EchoServer.PORT]) instead of adbd, so the encrypted pipe can
+     *  be verified end-to-end with plain `nc` on the box. */
+    val echo: Boolean = false,
+    /** Whether this route participates when the forwarder runs. Per-route
+     *  Start/Stop toggles this; the service only runs enabled routes. */
+    val enabled: Boolean = true,
 ) {
     fun summary(): String {
         val eg = when (egress) {
@@ -66,7 +73,8 @@ data class Route(
             EgressMode.NETWORK -> "  via ${transport.name.lowercase()}"
         }
         if (tunnel) {
-            return "tunnel  → $serverAddr:$serverPort ⇒ $targetAddr:$targetPort  (encrypted)$eg"
+            val tgt = if (echo) "echo-test" else "$targetAddr:$targetPort"
+            return "tunnel  → $serverAddr:$serverPort ⇒ $tgt  (encrypted)$eg"
         }
         if (socks) {
             return "socks5  $listenAddr:$listenPort$eg"

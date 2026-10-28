@@ -5,26 +5,32 @@ import android.text.InputType
 import android.view.Gravity
 import android.view.View
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import androidx.core.content.ContextCompat
 
 /**
- * Dead-simple tunnels/ports UI, built in code into a container LinearLayout.
+ * Static tunnel config UI (no accordions, no dialogs), built in code into a
+ * container LinearLayout.
  *
- * Layout: three collapsible **accordion** sections (Forward / SOCKS5 proxy /
- * Encrypted tunnel). Tap a header to expand it (others collapse). Each section
- * has labeled fillable boxes with the acceptable range shown, inline validation
- * on Add, and a button. Below the accordions is the list of active routes with
- * per-row delete. No dialogs.
+ * Top: the encrypted-tunnel form (add OR edit). Below: the list of saved
+ * tunnels, each row with its own Edit / Start|Stop / Delete controls. "enabled"
+ * is per-route; [onRestart] re-applies the enabled set by restarting the
+ * forwarder service.
  */
 class TunnelPanel(
     private val container: LinearLayout,
     private val onChanged: () -> Unit,
+    private val onRestart: () -> Unit,
+    private val isRunning: () -> Boolean,
 ) {
     private val ctx: Context = container.context
-    private var expanded = 2  // the tunnel section (the only one) is open by default
+
+    /** Non-null when the form is editing an existing route (its id). */
+    private var editingId: String? = null
 
     private companion object {
         const val ADBD_PORT = 5555          // pinned local adbd target
@@ -32,160 +38,361 @@ class TunnelPanel(
     }
 
     private fun dp(v: Int) = (v * ctx.resources.displayMetrics.density).toInt()
+    
+    private fun getColor(colorRes: Int) = ContextCompat.getColor(ctx, colorRes)
 
     fun render() {
         container.removeAllViews()
-        // Only the encrypted tunnel (remote adb) is offered; Forward and SOCKS5
-        // are intentionally hidden for the re-adb use case.
-        section(2, "▾  Encrypted tunnel  (remote adb)") { body -> tunnelForm(body) }
-        divider()
-        header("Active routes")
-        routesList()
+        tunnelForm()
+        sectionDivider()
+        savedTunnelsList()
     }
 
-    // ── accordion scaffolding ──
-    private fun section(index: Int, title: String, buildBody: (LinearLayout) -> Unit) {
-        val open = expanded == index
-        val head = TextView(ctx).apply {
-            text = (if (open) "▾" else "▸") + title.drop(1)
-            setTextColor(0xFFFFFFFF.toInt()); textSize = 15f
-            setPadding(dp(14), dp(12), dp(14), dp(12))
-            setBackgroundColor(if (open) 0xFF14263B.toInt() else 0xFF161616.toInt())
-            setOnClickListener { expanded = if (open) -1 else index; render() }
-        }
-        container.addView(head)
-        if (open) {
-            val body = LinearLayout(ctx).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(dp(14), dp(6), dp(14), dp(14))
-                setBackgroundColor(0xFF0D0D0D.toInt())
-            }
-            buildBody(body)
-            container.addView(body)
-        }
-    }
-
-    private fun header(t: String) = container.addView(TextView(ctx).apply {
-        text = t; setTextColor(0xFF90CAF9.toInt()); textSize = 13f
-        setPadding(dp(14), dp(10), dp(14), dp(4))
-    })
-
-    private fun divider() = container.addView(View(ctx).apply {
-        layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1))
-        setBackgroundColor(0xFF333333.toInt())
-    })
-
-    private fun field(parent: LinearLayout, label: String, hint: String,
-                      value: String = "", numeric: Boolean = false): EditText {
-        parent.addView(TextView(ctx).apply {
-            text = label; setTextColor(0xFFBBBBBB.toInt()); textSize = 12f
-            setPadding(0, dp(6), 0, 0)
-        })
-        val et = EditText(ctx).apply {
-            this.hint = hint; setText(value)
-            setTextColor(0xFFFFFFFF.toInt()); setHintTextColor(0xFF666666.toInt())
-            textSize = 14f
-            if (numeric) inputType = InputType.TYPE_CLASS_NUMBER
-        }
-        parent.addView(et)
-        return et
-    }
-
-    private fun addButton(parent: LinearLayout, text: String, onClick: () -> Unit) {
-        parent.addView(Button(ctx).apply {
+    // ── View helpers with proper styling ──
+    
+    private fun sectionHeader(text: String, topMargin: Int = 12) {
+        container.addView(TextView(ctx).apply {
             this.text = text
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(10) }
-            setOnClickListener { onClick() }
+            setTextColor(getColor(R.color.accent_blue))
+            textSize = 13f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(dp(16), dp(topMargin), dp(16), dp(6))
         })
+    }
+
+    private fun helpText(text: String, topMargin: Int = 4) {
+        container.addView(TextView(ctx).apply {
+            this.text = text
+            setTextColor(getColor(R.color.text_tertiary))
+            textSize = 11f
+            setPadding(dp(16), dp(topMargin), dp(16), dp(8))
+            setLineSpacing(dp(2).toFloat(), 1.0f)
+        })
+    }
+
+    private fun sectionDivider() {
+        container.addView(View(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 
+                dp(1)
+            ).apply { 
+                topMargin = dp(8)
+                bottomMargin = dp(8)
+            }
+            setBackgroundColor(getColor(R.color.divider_dark))
+        })
+    }
+
+    private fun fieldLabel(parent: LinearLayout, text: String) {
+        parent.addView(TextView(ctx).apply {
+            this.text = text
+            setTextColor(getColor(R.color.text_secondary))
+            textSize = 12f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(0, dp(8), 0, dp(4))
+        })
+    }
+
+    private fun editField(parent: LinearLayout, hint: String, value: String = "", 
+                         numeric: Boolean = false): EditText {
+        return EditText(ctx).apply {
+            this.hint = hint
+            setText(value)
+            setTextColor(getColor(R.color.text_primary))
+            setHintTextColor(getColor(R.color.text_hint))
+            setBackgroundColor(getColor(R.color.background_input))
+            textSize = 14f
+            isSingleLine = true
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            if (numeric) inputType = InputType.TYPE_CLASS_NUMBER
+            parent.addView(this)
+        }
+    }
+
+    private fun actionButton(text: String, colorRes: Int, 
+                            width: Int = LinearLayout.LayoutParams.WRAP_CONTENT,
+                            weight: Float = 0f,
+                            onClick: () -> Unit): Button {
+        return Button(ctx).apply {
+            this.text = text
+            textSize = 13f
+            setTextColor(getColor(colorRes))
+            setBackgroundColor(getColor(R.color.background_tertiary))
+            minHeight = dp(42)
+            minimumHeight = dp(42)
+            setPadding(dp(16), 0, dp(16), 0)
+            layoutParams = LinearLayout.LayoutParams(width, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                if (weight > 0f) this.weight = weight
+                marginStart = dp(8)
+            }
+            setOnClickListener { onClick() }
+        }
+    }
+
+    private fun smallButton(text: String, colorRes: Int, onClick: () -> Unit): Button {
+        return Button(ctx).apply {
+            this.text = text
+            textSize = 11f
+            setTextColor(getColor(colorRes))
+            setBackgroundColor(getColor(R.color.background_tertiary))
+            minHeight = dp(36)
+            minimumHeight = dp(36)
+            minWidth = dp(64)
+            minimumWidth = dp(64)
+            setPadding(dp(12), 0, dp(12), 0)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { marginStart = dp(6) }
+            setOnClickListener { onClick() }
+        }
     }
 
     // ── validation helpers ──
-    private fun port(s: String): Int? = s.trim().toIntOrNull()?.takeIf { it in 1..65535 }
-    private fun isHex64(s: String) = s.length == 64 && s.all { it.isDigit() || it.lowercaseChar() in 'a'..'f' }
+    private fun isHex64(s: String) = s.length == 64 && s.all { 
+        it.isDigit() || it.lowercaseChar() in 'a'..'f' 
+    }
+    
     private fun toast(m: String) = Toast.makeText(ctx, m, Toast.LENGTH_SHORT).show()
 
-    private fun add(r: Route) {
+    private fun upsert(r: Route) {
         val routes = RouteStore.load(ctx).toMutableList()
-        routes.add(r); RouteStore.save(ctx, routes)
-        expanded = -1
-        onChanged(); render()
-        toast("Added: ${r.summary()}")
+        val idx = routes.indexOfFirst { it.id == r.id }
+        if (idx >= 0) routes[idx] = r else routes.add(r)
+        RouteStore.save(ctx, routes)
+        editingId = null
+        onChanged()
+        render()
     }
 
-    // ── forms ──
-    private fun forwardForm(b: LinearLayout) {
-        val listen = field(b, "Listen port  (1–65535)", "e.g. 8080", numeric = true)
-        val taddr = field(b, "Target address", "127.0.0.1", "127.0.0.1")
-        val tport = field(b, "Target port  (1–65535)", "e.g. 80", numeric = true)
-        addButton(b, "Add forward") {
-            val lp = port(listen.text.toString()) ?: return@addButton toast("Listen port must be 1–65535")
-            val tp = port(tport.text.toString()) ?: return@addButton toast("Target port must be 1–65535")
-            add(Route(listenAddr = "127.0.0.1", listenPort = lp,
-                targetAddr = taddr.text.toString().ifBlank { "127.0.0.1" }, targetPort = tp))
+    // ── the tunnel form (add or edit) ──
+    private fun tunnelForm() {
+        val editing = editingId?.let { id -> 
+            RouteStore.load(ctx).firstOrNull { it.id == id } 
         }
-    }
 
-    private fun socksForm(b: LinearLayout) {
-        val listen = field(b, "Listen port  (1–65535, e.g. 1080)", "1080", "1080", numeric = true)
-        addButton(b, "Add SOCKS5 proxy") {
-            val lp = port(listen.text.toString()) ?: return@addButton toast("Listen port must be 1–65535")
-            add(Route(socks = true, listenAddr = "127.0.0.1", listenPort = lp))
-        }
-    }
-
-    private fun tunnelForm(b: LinearLayout) {
-        b.addView(TextView(ctx).apply {
-            text = "Exposes this device's adb (127.0.0.1:$ADBD_PORT) to your box, " +
-                "encrypted. Run  readb-setup  in the terminal first to enable adb. " +
+        // Section header
+        if (editing != null) {
+            sectionHeader("Edit tunnel", topMargin = 0)
+            helpText("Modify the tunnel settings below and tap Save.")
+        } else {
+            sectionHeader("Add encrypted tunnel", topMargin = 0)
+            helpText(
+                "Exposes this device's adb (127.0.0.1:$ADBD_PORT) to your remote box via " +
+                "an encrypted tunnel. Run readb-setup in the terminal first to enable adb. " +
                 "Server port is fixed at $TUNNEL_SERVER_PORT."
-            setTextColor(0xFF999999.toInt()); textSize = 11f; setPadding(0, dp(2), 0, dp(4))
-        })
-        val saddr = field(b, "Remote server IP", "your box ip / host")
-        val psk = field(b, "Key  (64 hex chars)", "64 hex characters")
-        addButton(b, "Add tunnel") {
-            if (saddr.text.isBlank()) return@addButton toast("Server IP required")
-            val key = psk.text.toString().trim()
-            if (!isHex64(key)) return@addButton toast("Key must be exactly 64 hex characters")
-            // Everything else is PINNED: dial the box on the fixed server port,
-            // splice to the local adbd on 127.0.0.1:5555.
-            add(Route(
+            )
+        }
+
+        // Form container with padding
+        val formContainer = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), 0, dp(16), dp(12))
+        }
+
+        // Server IP field
+        fieldLabel(formContainer, "Remote server IP")
+        val serverField = editField(
+            formContainer, 
+            "e.g., 192.168.1.100 or example.com", 
+            editing?.serverAddr ?: ""
+        )
+
+        // PSK field
+        fieldLabel(formContainer, "Encryption key (64 hex characters)")
+        val pskField = editField(
+            formContainer,
+            "64 hexadecimal characters",
+            editing?.psk ?: ""
+        )
+
+        // Echo test checkbox
+        val echoCheckbox = CheckBox(ctx).apply {
+            text = "Echo test mode (bypass adb, test encryption only)"
+            setTextColor(getColor(R.color.text_secondary))
+            textSize = 12f
+            setPadding(0, dp(12), 0, 0)
+            isChecked = editing?.echo ?: false
+        }
+        formContainer.addView(echoCheckbox)
+
+        // Action buttons
+        val buttonRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(16) }
+        }
+
+        if (editing != null) {
+            buttonRow.addView(actionButton("Cancel", R.color.text_secondary) {
+                editingId = null
+                render()
+            })
+        }
+
+        buttonRow.addView(actionButton(
+            if (editing != null) "Save" else "Add tunnel",
+            R.color.accent_green
+        ) {
+            val serverAddr = serverField.text.toString().trim()
+            val psk = pskField.text.toString().trim()
+            
+            if (serverAddr.isBlank()) {
+                toast("Server IP is required")
+                return@actionButton
+            }
+            
+            if (!isHex64(psk)) {
+                toast("Key must be exactly 64 hex characters")
+                return@actionButton
+            }
+
+            val base = editing ?: Route()
+            upsert(base.copy(
                 tunnel = true,
-                serverAddr = saddr.text.toString().trim(),
+                serverAddr = serverAddr,
                 serverPort = TUNNEL_SERVER_PORT,
                 targetAddr = "127.0.0.1",
                 targetPort = ADBD_PORT,
-                psk = key,
+                psk = psk,
+                echo = echoCheckbox.isChecked,
             ))
-        }
+            
+            toast(if (editing != null) "Tunnel saved" else "Tunnel added")
+            
+            // If editing an enabled route while running, restart to apply changes
+            if (editing != null && editing.enabled && isRunning()) {
+                onRestart()
+            }
+        })
+
+        formContainer.addView(buttonRow)
+        container.addView(formContainer)
     }
 
-    private fun routesList() {
+    private fun savedTunnelsList() {
         val routes = RouteStore.load(ctx)
+        
+        sectionHeader(
+            if (editingId != null) "Saved tunnels (editing one above)" 
+            else "Saved tunnels"
+        )
+
         if (routes.isEmpty()) {
             container.addView(TextView(ctx).apply {
-                text = "  (none yet)"; setTextColor(0xFF777777.toInt()); setPadding(dp(14), dp(2), 0, dp(8))
+                text = "No tunnels configured yet"
+                setTextColor(getColor(R.color.text_disabled))
+                textSize = 12f
+                setPadding(dp(16), dp(8), dp(16), dp(12))
+                gravity = Gravity.CENTER
             })
             return
         }
-        routes.forEach { r ->
-            val row = LinearLayout(ctx).apply {
-                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(14), dp(8), dp(8), dp(8))
-            }
-            row.addView(TextView(ctx).apply {
-                text = r.summary(); setTextColor(0xFFDDDDDD.toInt()); textSize = 13f
-                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            })
-            row.addView(Button(ctx).apply {
-                text = "Delete"; textSize = 12f
-                setOnClickListener {
-                    RouteStore.save(ctx, RouteStore.load(ctx).filter { it.id != r.id })
-                    onChanged(); render()
-                }
-            })
-            container.addView(row)
+
+        routes.forEach { route ->
+            routeCard(route)
         }
+    }
+
+    private fun routeCard(r: Route) {
+        val card = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(getColor(R.color.background_input))
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                setMargins(dp(12), dp(4), dp(12), dp(4))
+            }
+        }
+
+        // Status badge + summary line
+        val summaryRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
+        // Enabled indicator dot
+        summaryRow.addView(TextView(ctx).apply {
+            text = if (r.enabled) "●" else "○"
+            setTextColor(
+                if (r.enabled) getColor(R.color.status_enabled) 
+                else getColor(R.color.status_disabled)
+            )
+            textSize = 16f
+            setPadding(0, 0, dp(8), 0)
+        })
+
+        // Summary text
+        summaryRow.addView(TextView(ctx).apply {
+            text = r.summary()
+            setTextColor(
+                if (r.enabled) getColor(R.color.status_enabled)
+                else getColor(R.color.text_secondary)
+            )
+            textSize = 13f
+            typeface = android.graphics.Typeface.MONOSPACE
+            layoutParams = LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                1f
+            )
+        })
+
+        card.addView(summaryRow)
+
+        // Control buttons row
+        val controlsRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.START
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(10) }
+        }
+
+        controlsRow.addView(smallButton("Edit", R.color.accent_blue) {
+            editingId = r.id
+            render()
+        })
+
+        if (r.enabled) {
+            controlsRow.addView(smallButton("Stop", R.color.accent_red) {
+                setEnabled(r, false)
+            })
+        } else {
+            controlsRow.addView(smallButton("Start", R.color.accent_green) {
+                setEnabled(r, true)
+            })
+        }
+
+        controlsRow.addView(smallButton("Delete", R.color.accent_red_light) {
+            RouteStore.save(ctx, RouteStore.load(ctx).filter { it.id != r.id })
+            if (editingId == r.id) editingId = null
+            onChanged()
+            render()
+            if (r.enabled && isRunning()) onRestart()
+        })
+
+        card.addView(controlsRow)
+        container.addView(card)
+    }
+
+    /** Flip a route's enabled flag, persist, and apply via the service.
+     *  The native engine's routes are fixed at run(), so applying a change
+     *  means (re)starting with the new enabled set — handled by [onRestart],
+     *  which fully stops if no routes remain enabled. */
+    private fun setEnabled(r: Route, enabled: Boolean) {
+        val routes = RouteStore.load(ctx).map {
+            if (it.id == r.id) it.copy(enabled = enabled) else it
+        }
+        RouteStore.save(ctx, routes)
+        onChanged()
+        render()
+        onRestart()
     }
 }

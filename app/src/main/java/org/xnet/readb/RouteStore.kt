@@ -33,6 +33,8 @@ object RouteStore {
                     serverPort = o.optInt("serverPort"),
                     psk = o.optString("psk", ""),
                     cipher = o.optInt("cipher"),
+                    echo = o.optBoolean("echo", false),
+                    enabled = o.optBoolean("enabled", true),
                 )
             }
         }.getOrDefault(emptyList())
@@ -59,7 +61,9 @@ object RouteStore {
                     .put("serverAddr", r.serverAddr)
                     .put("serverPort", r.serverPort)
                     .put("psk", r.psk)
-                    .put("cipher", r.cipher),
+                    .put("cipher", r.cipher)
+                    .put("echo", r.echo)
+                    .put("enabled", r.enabled),
             )
         }
         prefs(ctx).edit().putString(KEY, arr.toString()).apply()
