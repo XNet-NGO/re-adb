@@ -29,22 +29,24 @@ class ForwarderService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        Log.i(TAG, "onStartCommand (worker=${worker != null})")
         if (worker != null) return START_STICKY
 
-        val routes = RouteStore.load(this)
+        val routes = try { RouteStore.load(this).filter { it.enabled } } catch (t: Throwable) {
+            Log.e(TAG, "RouteStore.load failed", t); emptyList()
+        }
+        Log.i(TAG, "loaded ${routes.size} enabled route(s): ${routes.joinToString { it.summary() }}")
         if (routes.isEmpty()) {
             stopSelf()
             return START_NOT_STICKY
         }
 
         if (!startForegroundSafely(routes.size)) {
-            // Could not enter foreground (e.g. missing/denied requirements).
-            // Running a background service for networking would be killed by
-            // the OS, so stop cleanly rather than limp along.
             Log.e(TAG, "startForeground failed; aborting")
             stopSelf()
             return START_NOT_STICKY
         }
+        Log.i(TAG, "entered foreground")
 
         val req = NetworkRequester(this)
         requester = req
@@ -64,6 +66,7 @@ class ForwarderService : Service() {
         // on the main thread; and the hev-task system is thread-local, so
         // new/add/run belong together on one thread.
         worker = thread(name = "portmux-run") {
+          try {
             val h = ReadbNative.nativeNew()
             if (h == 0L) {
                 Log.e(TAG, "portmux_new failed")
@@ -93,8 +96,16 @@ class ForwarderService : Service() {
                 }
                 val rc = if (r.tunnel) {
                     // Encrypted tunnel client: dial server, splice to target.
+                    // For an echo-test route, start the in-app loopback echo
+                    // server and splice the tunnel to it instead of adbd.
+                    val (tAddr, tPort) = if (r.echo) {
+                        EchoServer.start()
+                        "127.0.0.1" to EchoServer.PORT
+                    } else {
+                        r.targetAddr to r.targetPort
+                    }
                     ReadbNative.nativeAddTunnelClient(
-                        h, r.serverAddr, r.serverPort, r.targetAddr, r.targetPort,
+                        h, r.serverAddr, r.serverPort, tAddr, tPort,
                         r.psk, r.cipher, kind, r.egressArg, netHandle, token,
                     )
                 } else if (r.socks) {
@@ -111,12 +122,16 @@ class ForwarderService : Service() {
                         r.targetAddr, r.targetPort, kind, r.egressArg, netHandle, token,
                     )
                 }
-                if (rc != 0) Log.w(TAG, "add route failed: ${r.summary()}")
+                if (rc != 0) Log.w(TAG, "add route failed (rc=$rc): ${r.summary()}")
+                else Log.i(TAG, "added route rc=0: ${r.summary()}")
             }
 
             Log.i(TAG, "forwarder run loop start")
             ReadbNative.nativeRun(h) // blocks until stop
             Log.i(TAG, "forwarder run loop exit")
+          } catch (t: Throwable) {
+            Log.e(TAG, "worker crashed", t)
+          }
         }
         return START_STICKY
     }
@@ -131,6 +146,7 @@ class ForwarderService : Service() {
         worker = null
         requester?.releaseAll()
         requester = null
+        EchoServer.stop()
         super.onDestroy()
     }
 
