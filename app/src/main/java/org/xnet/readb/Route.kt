@@ -104,10 +104,17 @@ data class Route(
         }
         if (jump) {
             val tgt = if (echo) "echo-test" else "$targetAddr:$targetPort"
-            val chain = jumpHops.joinToString(" → ")
             if (reverseEdge) {
-                return "rjump   $chain ⇒ reverse → $tgt  (encrypted, OPENR)$eg"
+                // A reverse edge carries data the OPPOSITE way to the carrier-
+                // dial order: this device dials out along jumpHops[0..n], but an
+                // `adb connect` enters at the TERMINAL (the LAST hop) and flows
+                // back up the chain to THIS device's reverse target (adbd). Show
+                // it in that real reverse-flow direction so the list isn't read
+                // backwards: terminal ⇐ relays ⇐ this device.
+                val revFlow = jumpHops.reversed().joinToString(" ← ")
+                return "rjump   adb@[$revFlow] ← this:$tgt  (reverse, encrypted OPENR)$eg"
             }
+            val chain = jumpHops.joinToString(" → ")
             return "jump    :$jumpListenPort ⇒ $chain ⇒ $tgt  (encrypted)$eg"
         }
         if (tunnel) {

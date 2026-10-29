@@ -235,7 +235,13 @@ class TunnelPanel(
         val hopsField = editField(
             jumpFields,
             "e.g., 10.0.0.1:2222,10.0.0.2:2222",
-            editing?.jumpHops?.joinToString(",") ?: ""
+            // Stored jumpHops are in carrier-dial order. A reverse edge is
+            // ENTERED/shown in terminal-first (reverse-flow) order, so display
+            // the reverse of the stored list to round-trip cleanly on edit.
+            editing?.let { e ->
+                val hs = e.jumpHops
+                if (e.reverseEdge) hs.reversed() else hs
+            }?.joinToString(",") ?: ""
         )
         fieldLabel(jumpFields, "Final target (addr:port)")
         val jumpTargetField = editField(
@@ -268,8 +274,19 @@ class TunnelPanel(
         // In reverse mode the entry listener is on the remote terminal, so the
         // local entry port field is irrelevant here.
         val listenLabelAndField = { vis: Int -> jumpListenField.visibility = vis }
+        // Clarify hop ENTRY order per mode: reverse edge is typed terminal-first
+        // (the node you `adb connect` to, then back toward this device); forward
+        // is typed in dial order (first hop this device dials, to the target).
+        val applyHopsHint = { rev: Boolean ->
+            hopsField.hint = if (rev)
+                "terminal-first, e.g. runner:2301,prod:2301"
+            else
+                "dial order, e.g. 10.0.0.1:2222,10.0.0.2:2222"
+        }
+        applyHopsHint(reverseCheckbox.isChecked)
         reverseCheckbox.setOnCheckedChangeListener { _, checked ->
             listenLabelAndField(if (checked) View.GONE else View.VISIBLE)
+            applyHopsHint(checked)
         }
         if (reverseCheckbox.isChecked) jumpListenField.visibility = View.GONE
         formContainer.addView(jumpFields)
@@ -344,18 +361,27 @@ class TunnelPanel(
 
             if (jumpCheckbox.isChecked) {
                 // Multi-hop jump route: validate hops + target + entry port.
-                val hops = hopsField.text.toString().trim()
+                val enteredHops = hopsField.text.toString().trim()
                     .split(',')
                     .map { it.trim() }
                     .filter { it.isNotEmpty() }
-                if (hops.isEmpty() || hops.size > ReadbNative.MAX_HOPS) {
+                if (enteredHops.isEmpty() || enteredHops.size > ReadbNative.MAX_HOPS) {
                     toast("Enter 1 to ${ReadbNative.MAX_HOPS} jump hops (addr:port)")
                     return@actionButton
                 }
-                if (hops.any { it.substringAfterLast(':', "").toIntOrNull() == null }) {
+                if (enteredHops.any { it.substringAfterLast(':', "").toIntOrNull() == null }) {
                     toast("Each hop must be addr:port")
                     return@actionButton
                 }
+                val reverse = reverseCheckbox.isChecked
+                // The ENGINE always needs carrier-dial order: hops[0] = the hop
+                // THIS device dials first. For a FORWARD jump that is also the
+                // order data flows, so the user types it directly. For a REVERSE
+                // edge the user thinks in flow order — from where they `adb
+                // connect` (the terminal) back toward this device — i.e. the
+                // REVERSE of dial order. So accept the intuitive terminal-first
+                // order in the field and reverse it into dial order here.
+                val hops = if (reverse) enteredHops.reversed() else enteredHops
                 val first = hops.first()
                 val firstAddr = first.substringBeforeLast(':')
                 val firstPort = first.substringAfterLast(':').toIntOrNull() ?: 0
@@ -367,7 +393,6 @@ class TunnelPanel(
                     toast("Final target must be addr:port")
                     return@actionButton
                 }
-                val reverse = reverseCheckbox.isChecked
                 if (!reverse && listenPort <= 0) {
                     toast("Local entry port is required")
                     return@actionButton
