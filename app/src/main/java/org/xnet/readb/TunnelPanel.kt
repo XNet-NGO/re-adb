@@ -252,6 +252,26 @@ class TunnelPanel(
             editing?.jumpListenPort?.takeIf { it > 0 }?.toString() ?: "",
             numeric = true
         )
+        // Reverse edge (portmux v0.7.0 OPENR): the phone dials OUT the chain but
+        // opens NO local entry; the far TERMINAL peer (e.g. runner PM_RLISTEN
+        // :2222) accepts `adb connect` and routes OPENR back here, where this
+        // edge connects its reverse target (the final target field = adbd).
+        val reverseCheckbox = CheckBox(ctx).apply {
+            text = "Reverse edge (terminal accepts adb; this device exposes its adbd)"
+            setTextColor(getColor(R.color.text_secondary))
+            textSize = 12f
+            setPadding(0, dp(8), 0, 0)
+            isChecked = editing?.reverseEdge ?: false
+            visibility = if (jumpCheckbox.isChecked) View.VISIBLE else View.GONE
+        }
+        jumpFields.addView(reverseCheckbox)
+        // In reverse mode the entry listener is on the remote terminal, so the
+        // local entry port field is irrelevant here.
+        val listenLabelAndField = { vis: Int -> jumpListenField.visibility = vis }
+        reverseCheckbox.setOnCheckedChangeListener { _, checked ->
+            listenLabelAndField(if (checked) View.GONE else View.VISIBLE)
+        }
+        if (reverseCheckbox.isChecked) jumpListenField.visibility = View.GONE
         formContainer.addView(jumpFields)
 
         // Echo test checkbox — single-hop ONLY (echo bypasses adb to test the
@@ -272,6 +292,7 @@ class TunnelPanel(
             jumpFields.visibility = if (checked) View.VISIBLE else View.GONE
             serverGroup.visibility = if (checked) View.GONE else View.VISIBLE
             echoCheckbox.visibility = if (checked) View.GONE else View.VISIBLE
+            reverseCheckbox.visibility = if (checked) View.VISIBLE else View.GONE
             if (checked) {
                 // Reveal + bring the newly-shown fields into view above the IME:
                 // focusing the first field makes the parent ScrollView scroll it
@@ -346,15 +367,17 @@ class TunnelPanel(
                     toast("Final target must be addr:port")
                     return@actionButton
                 }
-                if (listenPort <= 0) {
+                val reverse = reverseCheckbox.isChecked
+                if (!reverse && listenPort <= 0) {
                     toast("Local entry port is required")
                     return@actionButton
                 }
                 upsert(base.copy(
                     tunnel = false, socks = false, peer = false,
                     jump = true,
+                    reverseEdge = reverse,
                     jumpHops = hops,
-                    jumpListenPort = listenPort,
+                    jumpListenPort = if (reverse) 0 else listenPort,
                     jumpProto = ReadbNative.PROTO_TCP,
                     // First hop is the carrier dest; keep server fields in sync.
                     serverAddr = firstAddr,

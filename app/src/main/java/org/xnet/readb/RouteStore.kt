@@ -41,6 +41,7 @@ object RouteStore {
                     jumpProto = o.optInt("jumpProto"),
                     peer = o.optBoolean("peer", false),
                     echo = o.optBoolean("echo", false),
+                    reverseEdge = o.optBoolean("reverseEdge", false),
                     enabled = o.optBoolean("enabled", true),
                 )
             }
@@ -75,6 +76,7 @@ object RouteStore {
                     .put("jumpProto", r.jumpProto)
                     .put("peer", r.peer)
                     .put("echo", r.echo)
+                    .put("reverseEdge", r.reverseEdge)
                     .put("enabled", r.enabled),
             )
         }
