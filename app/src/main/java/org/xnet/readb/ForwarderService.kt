@@ -103,23 +103,38 @@ class ForwarderService : Service() {
                         r.psk, r.cipher, kind, r.egressArg, netHandle, token,
                     )
                 } else if (r.jump) {
-                    // EDGE originator (v0.5.0 multi-hop): a tunnel client with a
-                    // local plaintext reverse listener that emits OPENJ built
-                    // from the configured jump-list. hops[0] is the carrier
-                    // dest (serverAddr:serverPort); configure the jump-list on
-                    // the just-added route with nativeSetJumps.
+                    // EDGE originator (multi-hop). Two shapes:
+                    //  FORWARD (v0.5.0): a tunnel client with a local plaintext
+                    //    reverse listener (jumpListenPort) that emits OPENJ; the
+                    //    TERMINAL dials the target.
+                    //  REVERSE (v0.7.0, reverseEdge=true): the phone dials OUT
+                    //    the chain but opens NO local entry; the TERMINAL peer
+                    //    (far end PM_RLISTEN) accepts the client and emits OPENR
+                    //    back up the chain, and THIS edge connects its reverse
+                    //    target (the phone's adbd) on OPENR.
                     val (tAddr, tPort) = if (r.echo) {
                         EchoServer.start()
                         "127.0.0.1" to EchoServer.PORT
                     } else {
                         r.targetAddr to r.targetPort
                     }
-                    val crc = ReadbNative.nativeAddTunnelClient(
-                        h, r.serverAddr, r.serverPort, tAddr, tPort,
-                        r.psk, r.cipher, kind, r.egressArg, netHandle, token,
-                        // Reverse/edge listener = the local OPENJ entry point.
-                        "127.0.0.1", r.jumpListenPort, "", 0, ReadbNative.RPROTO_TCP,
-                    )
+                    val crc = if (r.reverseEdge) {
+                        // Reverse edge: no local listener (rlistenPort=0); set
+                        // the reverse target = adbd (rtargetAddr/rtargetPort),
+                        // which the engine connects when an OPENR rides back.
+                        ReadbNative.nativeAddTunnelClient(
+                            h, r.serverAddr, r.serverPort, tAddr, tPort,
+                            r.psk, r.cipher, kind, r.egressArg, netHandle, token,
+                            "", 0, tAddr, tPort, ReadbNative.RPROTO_TCP,
+                        )
+                    } else {
+                        // Forward edge: local OPENJ entry on jumpListenPort.
+                        ReadbNative.nativeAddTunnelClient(
+                            h, r.serverAddr, r.serverPort, tAddr, tPort,
+                            r.psk, r.cipher, kind, r.egressArg, netHandle, token,
+                            "127.0.0.1", r.jumpListenPort, "", 0, ReadbNative.RPROTO_TCP,
+                        )
+                    }
                     if (crc != 0) {
                         crc
                     } else {

@@ -79,6 +79,15 @@ data class Route(
      *  (127.0.0.1:[EchoServer.PORT]) instead of adbd, so the encrypted pipe can
      *  be verified end-to-end with plain `nc` on the box. */
     val echo: Boolean = false,
+    /** True if this jump route is a REVERSE EDGE (portmux v0.7.0 OPENR): the
+     *  phone dials OUT the carrier chain ([jumpHops]) but does NOT open a local
+     *  entry listener. Instead the TERMINAL peer (far end, e.g. the runner's
+     *  PM_RLISTEN :2222) accepts `adb connect` and emits OPENR back up the
+     *  chain; this edge connects its reverse target ([targetAddr]:[targetPort],
+     *  the phone's own adbd 127.0.0.1:5555) when OPENR arrives. Only meaningful
+     *  with [jump]=true. When false, a jump route is a FORWARD edge (opens a
+     *  local [jumpListenPort] entry and the terminal dials the target). */
+    val reverseEdge: Boolean = false,
     /** Whether this route participates when the forwarder runs. Per-route
      *  Start/Stop toggles this; the service only runs enabled routes. */
     val enabled: Boolean = true,
@@ -96,6 +105,9 @@ data class Route(
         if (jump) {
             val tgt = if (echo) "echo-test" else "$targetAddr:$targetPort"
             val chain = jumpHops.joinToString(" → ")
+            if (reverseEdge) {
+                return "rjump   $chain ⇒ reverse → $tgt  (encrypted, OPENR)$eg"
+            }
             return "jump    :$jumpListenPort ⇒ $chain ⇒ $tgt  (encrypted)$eg"
         }
         if (tunnel) {
